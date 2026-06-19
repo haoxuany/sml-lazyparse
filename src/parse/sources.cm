@@ -1,0 +1,12 @@
+library
+  structure Lex
+  structure ParseTokens
+  functor ParseParseFn
+is
+  $/ml-lpt-lib.cm
+  ../../lib/cmlib/cmlib.cm
+
+  ../ast/sources.cm
+
+  lex.lex.sml
+  parse.grm.sml

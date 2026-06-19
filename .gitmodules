@@ -1,0 +1,6 @@
+[submodule "lib/cmlib"]
+	path = lib/cmlib
+	url = https://github.com/standardml/cmlib.git
+[submodule "lib/sml-parcom"]
+	path = lib/sml-parcom
+	url = https://github.com/haoxuany/sml-parcom.git

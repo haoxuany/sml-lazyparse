@@ -1,0 +1,10 @@
+library
+  structure Ast
+  structure Grammar
+  structure Elaboration
+is
+  ../../lib/cmlib/cmlib.cm
+
+  ast.sml
+  grammar.sml
+  elaboration.sml

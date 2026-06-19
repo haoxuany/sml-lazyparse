@@ -1,0 +1,9 @@
+Stmt ::= Exp [ name Exp ]
+       | "if" Exp "then" Stmt "else" Stmt [ name IfThenElse ]
+
+Exp ::= Exp "+" Exp [ name Plus , assoc left , prec 1 ]
+      | Exp "-" Exp [ name Minus , assoc left , prec 1 ]
+      | Exp "*" Exp [ name Times , assoc left , prec 2 ]
+      | Exp "/" Exp [ name Div , assoc left , prec 2 ]
+      | "(" Exp ")" [ name Parens ]
+      | 'number' [ name Num ]

@@ -1,0 +1,10 @@
+group is
+
+  $/ml-lpt-lib.cm
+  ../../lib/cmlib/cmlib.cm
+
+  ../ast/sources.cm
+  ../parse/sources.cm
+  ../codegen/sources.cm
+
+  main.sml

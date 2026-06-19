@@ -1,0 +1,13 @@
+library
+  structure Annot
+  functor LexInternal
+  structure PrintBuffer
+  signature TERMINAL
+  signature TERMINAL_PRINTABLE
+is
+  ../../lib/cmlib/cmlib.cm
+
+  annot.sml
+  lex_internal.sml
+  print_buffer.sml
+  terminal.sig.sml

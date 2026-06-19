@@ -1,0 +1,72 @@
+%defs (
+  structure A = Ast
+);
+
+%name Parse;
+
+%tokens
+  : COLONCOLONEQ        ("::=")
+  | BAR                 ("|")
+  | STAR                ("*")
+  | QUERY               ("?")
+  | LP                  ("(")
+  | RP                  (")")
+  | LB                  ("[")
+  | RB                  ("]")
+  | COMMA               (",")
+  | ASSOC_LEFT           ("left")
+  | ASSOC_RIGHT          ("right")
+  | ASSOC_NONE           ("none")
+  | RULE_NAME            ("name")
+  | KW_ASSOC             ("assoc")
+  | KW_PREC              ("prec")
+  | STRING of string
+  | TERMINAL of string
+  | INT of int
+  | IDENT of string
+  ;
+
+Grammar
+  : Definition* => ({ definitions = Definition } : A.grammar)
+  ;
+
+Definition
+  : IDENT "::=" Alt ("|" Alt)* => ({ name = IDENT , rule = Alt :: SR } : A.definition)
+  ;
+
+Alt
+  : SeqRule "[" Property ("," Property)* "]"
+    => (SeqRule , Property :: SR)
+  ;
+
+SeqRule
+  : PostfixRule+ => (case PostfixRule
+                       of [single] => single
+                        | items => A.Seq items)
+  ;
+
+PostfixRule
+  : AtomRule ("*" => (A.Star AtomRule)
+             | "?" => (A.Opt AtomRule)
+             | => (AtomRule))
+    => (SR)
+  ;
+
+AtomRule
+  : IDENT               => (A.Nonterminal IDENT)
+  | STRING              => (A.Keyword STRING)
+  | TERMINAL            => (A.Terminal TERMINAL)
+  | "(" SeqRule ")"     => (SeqRule)
+  ;
+
+Property
+  : "assoc" Assoc        => (A.Assoc Assoc)
+  | "prec" INT           => (A.Prec INT)
+  | "name" IDENT         => (A.RuleName IDENT)
+  ;
+
+Assoc
+  : "left"               => (A.Left)
+  | "right"              => (A.Right)
+  | "none"               => (A.None)
+  ;

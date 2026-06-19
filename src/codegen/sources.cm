@@ -1,0 +1,8 @@
+library
+  structure Codegen
+is
+  ../../lib/cmlib/cmlib.cm
+
+  ../ast/sources.cm
+
+  codegen.sml

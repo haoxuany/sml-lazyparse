@@ -1,0 +1,2 @@
+#!/bin/sh
+exec sml @SMLload="$(dirname "$0")/lazyparse-heap" @SMLdebug=/dev/null "$@"
