@@ -1,7 +1,7 @@
 structure Ast =
   struct
 
-    type ident = string
+    type id = string
 
     datatype assoc
       = Left
@@ -11,18 +11,19 @@ structure Ast =
     datatype property
       = Assoc of assoc
       | Prec of int
-      | RuleName of ident
+      | RuleName of id
 
     datatype rule
       = Seq of rule list               (* A B C *)
       | Star of rule                   (* A* *)
+      | Plus of rule                   (* A+ *)
       | Opt of rule                    (* A? *)
       | Terminal of string             (* 'terminal' *)
       | Keyword of string              (* "terminal" *)
-      | Nonterminal of ident           (* A *)
+      | Nonterminal of id           (* A *)
 
     (* Name ::= rule [ name Plus , left 3 ] | rule | ... *)
-    type definition = { name : ident , rule : (rule * property list) list }
+    type definition = { name : id , rule : (rule * property list) list }
 
     type grammar = { definitions : definition list }
 

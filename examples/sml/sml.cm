@@ -1,0 +1,8 @@
+group is
+
+  ../../lib/cmlib/cmlib.cm
+  ../../lib/sml-parcom/parcom.cm
+  ../../src/link/sources.cm
+
+  sml.sml
+  sml_parser.sml

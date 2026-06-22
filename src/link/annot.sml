@@ -34,4 +34,10 @@ structure Annot = struct
   fun length
     ({ start = { pos = a_pos , ... } : pos , finish = { pos = b_pos , ... } : pos } : span)
     = b_pos - a_pos
+
+  fun compare
+    ( { pos = a_pos , ... } : pos
+    , { pos = b_pos , ... } : pos
+    ) =
+    Int.compare (a_pos , b_pos)
 end

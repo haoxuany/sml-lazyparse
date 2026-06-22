@@ -68,11 +68,9 @@ struct
     fun keyword k = terminal (fn
       LexInternal.TokenKeyword (k' , sp) => if k = k' then SOME sp else NONE
     | _ => NONE)
-    val skipTrivial = optional (remove (fn
+    val skipTrivial = optionalLongest (remove (fn
       LexInternal.TokenTrivial _ => true
     | _ => false))
-    fun tag lex con (s , pos) =
-      case lex (s , pos) of SOME (v , s' , pos') => SOME (con v , Annot.span pos pos' , s' , pos') | NONE => NONE
     fun parseTerminal proj = terminal (fn
       LexInternal.TokenOther (v , sp) => (case proj v of SOME t => SOME { node = t , span = sp } | NONE => NONE)
     | _ => NONE)
@@ -85,126 +83,145 @@ struct
   type token_stream = (int , Trivial.t , terminal_token) LexInternal.token Stream.stream
   
   fun lex s pos = LexInternal.lex s pos keywords Trivial.lex
-    [ tag Terminals.Number.lex TerminalNumber
+    [ fn x => case Terminals.Number.lex x of SOME (v , s , p) => SOME (TerminalNumber v , s , p) | NONE => NONE
     ]
   
-    val parseStmt = memoize
+    (* Stmt *)
+    val parseStmt =
       let
-        val parseExp =
-          bind (deref parseExpDummy) (fn v0 =>
-          return
-            { node = StmtExp v0
-            , span = Annot.span (#start (#span v0)) (#finish (#span v0))
-            })
+        val parseAtom = fix (fn parseAtom =>
+        let
+          val parseExp =
+            bind (deref parseExpDummy) (fn v0 as { span = v0_span , ... } =>
+            return
+              { node = StmtExp v0
+              , span = Annot.span (#start v0_span) (#finish v0_span)
+              })
   
-        val parseAtom = either
+        in either
         [ parseExp
         ]
+        end)
   
-        val parseIfThenElse =
-          bind skipTrivial (fn _ =>
-          bind (keyword 7) (fn v0 =>
-          bind (deref parseExpDummy) (fn v1 =>
-          bind skipTrivial (fn _ =>
-          bind (keyword 8) (fn v2 =>
-          bind parseAtom (fn v3 =>
-          bind skipTrivial (fn _ =>
-          bind (keyword 6) (fn v4 =>
-          bind parseAtom (fn v5 =>
-          return
-            { node = StmtIfThenElse (v1 , v3 , v5)
-            , span = Annot.span (#start v0) (#finish (#span v5))
-            })))))))))
+        val parseLevel5 = fix (fn parseLevel5 =>
+        let
+          val parseIfThenElse =
+            bind skipTrivial (fn _ =>
+            bind (keyword 7) (fn v0 =>
+            bind (deref parseExpDummy) (fn v1 as { span = v1_span , ... } =>
+            bind skipTrivial (fn _ =>
+            bind (keyword 8) (fn v2 =>
+            bind (forget parseAtom) (fn v3 as { span = v3_span , ... } =>
+            bind skipTrivial (fn _ =>
+            bind (keyword 6) (fn v4 =>
+            bind parseLevel5 (fn v5 as { span = v5_span , ... } =>
+            return
+              { node = StmtIfThenElse (v1 , v3 , v5)
+              , span = Annot.span (#start v0) (#finish v5_span)
+              })))))))))
   
-        val parseLevel5 = either
-        [ parseAtom
+        in either
+        [ (forget parseAtom)
         , parseIfThenElse
         ]
+        end)
   
       in
-        parseLevel5
+        forget parseLevel5
       end
-    val parseExp = memoize
+  
+    (* Exp *)
+    val parseExp =
       let
-        val parseParens =
-          bind skipTrivial (fn _ =>
-          bind (keyword 0) (fn v0 =>
-          bind (deref parseExpDummy) (fn v1 =>
-          bind skipTrivial (fn _ =>
-          bind (keyword 1) (fn v2 =>
-          return
-            { node = ExpParens v1
-            , span = Annot.span (#start v0) (#finish v2)
-            })))))
+        val parseAtom = fix (fn parseAtom =>
+        let
+          val parseParens =
+            bind skipTrivial (fn _ =>
+            bind (keyword 0) (fn v0 =>
+            bind (deref parseExpDummy) (fn v1 as { span = v1_span , ... } =>
+            bind skipTrivial (fn _ =>
+            bind (keyword 1) (fn v2 =>
+            return
+              { node = ExpParens v1
+              , span = Annot.span (#start v0) (#finish v2)
+              })))))
   
-        val parseNum =
-          bind skipTrivial (fn _ =>
-          bind (parseTerminalNumber) (fn v0 =>
-          return
-            { node = ExpNum v0
-            , span = Annot.span (#start (#span v0)) (#finish (#span v0))
-            }))
+          val parseNum =
+            bind skipTrivial (fn _ =>
+            bind (parseTerminalNumber) (fn v0 as { span = v0_span , ... } =>
+            return
+              { node = ExpNum v0
+              , span = Annot.span (#start v0_span) (#finish v0_span)
+              }))
   
-        val parseAtom = either
+        in either
         [ parseParens
         , parseNum
         ]
+        end)
   
-        val parseTimes =
-          bind parseAtom (fn v0 =>
-          bind skipTrivial (fn _ =>
-          bind (keyword 2) (fn v1 =>
-          bind parseAtom (fn v2 =>
-          return
-            { node = ExpTimes (v0 , v2)
-            , span = Annot.span (#start (#span v0)) (#finish (#span v2))
-            }))))
+        val parseLevel2 = fix (fn parseLevel2 =>
+        let
+          val parseTimes =
+            bind parseLevel2 (fn v0 as { span = v0_span , ... } =>
+            bind skipTrivial (fn _ =>
+            bind (keyword 2) (fn v1 =>
+            bind (forget parseAtom) (fn v2 as { span = v2_span , ... } =>
+            return
+              { node = ExpTimes (v0 , v2)
+              , span = Annot.span (#start v0_span) (#finish v2_span)
+              }))))
   
-        val parseDiv =
-          bind parseAtom (fn v0 =>
-          bind skipTrivial (fn _ =>
-          bind (keyword 5) (fn v1 =>
-          bind parseAtom (fn v2 =>
-          return
-            { node = ExpDiv (v0 , v2)
-            , span = Annot.span (#start (#span v0)) (#finish (#span v2))
-            }))))
+          val parseDiv =
+            bind parseLevel2 (fn v0 as { span = v0_span , ... } =>
+            bind skipTrivial (fn _ =>
+            bind (keyword 5) (fn v1 =>
+            bind (forget parseAtom) (fn v2 as { span = v2_span , ... } =>
+            return
+              { node = ExpDiv (v0 , v2)
+              , span = Annot.span (#start v0_span) (#finish v2_span)
+              }))))
   
-        val parseLevel2 = either
-        [ parseAtom
+        in either
+        [ (forget parseAtom)
         , parseTimes
         , parseDiv
         ]
+        end)
   
-        val parsePlus =
-          bind parseLevel2 (fn v0 =>
-          bind skipTrivial (fn _ =>
-          bind (keyword 3) (fn v1 =>
-          bind parseLevel2 (fn v2 =>
-          return
-            { node = ExpPlus (v0 , v2)
-            , span = Annot.span (#start (#span v0)) (#finish (#span v2))
-            }))))
+        val parseLevel1 = fix (fn parseLevel1 =>
+        let
+          val parsePlus =
+            bind parseLevel1 (fn v0 as { span = v0_span , ... } =>
+            bind skipTrivial (fn _ =>
+            bind (keyword 3) (fn v1 =>
+            bind (forget parseLevel2) (fn v2 as { span = v2_span , ... } =>
+            return
+              { node = ExpPlus (v0 , v2)
+              , span = Annot.span (#start v0_span) (#finish v2_span)
+              }))))
   
-        val parseMinus =
-          bind parseLevel2 (fn v0 =>
-          bind skipTrivial (fn _ =>
-          bind (keyword 4) (fn v1 =>
-          bind parseLevel2 (fn v2 =>
-          return
-            { node = ExpMinus (v0 , v2)
-            , span = Annot.span (#start (#span v0)) (#finish (#span v2))
-            }))))
+          val parseMinus =
+            bind parseLevel1 (fn v0 as { span = v0_span , ... } =>
+            bind skipTrivial (fn _ =>
+            bind (keyword 4) (fn v1 =>
+            bind (forget parseLevel2) (fn v2 as { span = v2_span , ... } =>
+            return
+              { node = ExpMinus (v0 , v2)
+              , span = Annot.span (#start v0_span) (#finish v2_span)
+              }))))
   
-        val parseLevel1 = either
-        [ parseLevel2
+        in either
+        [ (forget parseLevel2)
         , parsePlus
         , parseMinus
         ]
+        end)
   
       in
-        parseLevel1
+        forget parseLevel1
       end
+  
   
   val () = set parseStmtDummy parseStmt
   val () = set parseExpDummy parseExp

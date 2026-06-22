@@ -1,0 +1,217 @@
+// SML grammar based on Rossberg's CFG
+// https://people.mpi-sws.org/~rossberg/sml.html
+// Fixity parsing is not context free and is not handled here.
+
+// ============================================================
+// Constants
+// ============================================================
+
+Con ::= 'int' [ name Int ]
+      | 'word' [ name Word ]
+      | 'float' [ name Float ]
+      | 'char' [ name Char ]
+      | 'string' [ name String ]
+
+// ============================================================
+// Identifiers
+// ============================================================
+
+// lab is either an id or a numeric label
+Lab ::= 'id' [ name Id ]
+      | 'int' [ name Num ]
+
+LongId ::= 'id' ("." 'id')* [ name LongId ]
+
+// ============================================================
+// Expressions
+// ============================================================
+
+Exp ::= Con [ name Const ]
+      | "op" LongId [ name OpId ]
+      | LongId [ name Id ]
+      | Exp Exp [ name App , assoc left , prec 8 ]
+      | "(" Exp ")" [ name Parens ]
+      | "(" Exp "," Exp ("," Exp)* ")" [ name Tuple ]
+      | "{" ExpRow? "}" [ name Record ]
+      | "#" Lab [ name Selector ]
+      | "[" ExpListInner? "]" [ name List ]
+      | "(" Exp (";" Exp)+ ")" [ name Seq ]
+      | "let" DecList "in" Exp (";" Exp)* "end" [ name Let ]
+      | Exp ":" Typ [ name Annot , prec 7 ]
+      | "raise" Exp [ name Raise ]
+      | Exp "handle" Match [ name Handle , prec 6 ]
+      | Exp "andalso" Exp [ name AndAlso , assoc left , prec 5 ]
+      | Exp "orelse" Exp [ name OrElse , assoc left , prec 4 ]
+      | "if" Exp "then" Exp "else" Exp [ name If ]
+      | "while" Exp "do" Exp [ name While ]
+      | "case" Exp "of" Match [ name Case ]
+      | "fn" Match [ name Fn ]
+
+ExpListInner ::= Exp ("," Exp)* [ name ExpListInner ]
+
+ExpRow ::= Lab "=" Exp ("," Lab "=" Exp)* [ name ExpRow ]
+
+// ============================================================
+// Matches
+// ============================================================
+
+Match ::= MatchArm ("|" MatchArm)* [ name Match ]
+
+MatchArm ::= Pat "=>" Exp [ name MatchArm ]
+
+// ============================================================
+// Patterns
+// ============================================================
+
+Pat ::= Con [ name Const ]
+      | "_" [ name Wildcard ]
+      | "op" 'id' [ name OpVar ]
+      | 'id' [ name Var ]
+      | "op" LongId Pat? [ name OpCon ]
+      | LongId Pat [ name Con ]
+      | "(" Pat ")" [ name Parens ]
+      | "(" Pat "," Pat ("," Pat)* ")" [ name Tuple ]
+      | "{" PatRow? "}" [ name Record ]
+      | "[" PatListInner? "]" [ name List ]
+      | Pat ":" Typ [ name Annot ]
+      | "op" 'id' (":" Typ)? "as" Pat [ name OpLayered ]
+      | 'id' (":" Typ)? "as" Pat [ name Layered ]
+
+PatListInner ::= Pat ("," Pat)* [ name PatListInner ]
+
+PatRow ::= "..." [ name Wildcard ]
+         | Lab "=" Pat ("," PatRow)? [ name Pat ]
+         | 'id' (":" Typ)? ("as" Pat)? ("," PatRow)? [ name Var ]
+
+// ============================================================
+// Types
+// ============================================================
+
+Typ ::= 'tyvar' [ name Var ]
+      | Typ LongId [ name ConApp , prec 3 ]
+      | "(" Typ "," Typ ("," Typ)* ")" LongId [ name ConAppMulti ]
+      | LongId [ name Con ]
+      | "(" Typ ")" [ name Parens ]
+      | Typ "->" Typ [ name Arrow , assoc right , prec 1 ]
+      | Typ ("*" Typ)+ [ name TupleTyp , prec 2 ]
+      | "{" TypRow? "}" [ name Record ]
+
+TypRow ::= Lab ":" Typ ("," Lab ":" Typ)* [ name TypRow ]
+
+// ============================================================
+// Declarations
+// ============================================================
+
+Dec ::= "val" TyVarSeq ValBind [ name Val ]
+      | "fun" TyVarSeq FunBind [ name Fun ]
+      | "type" TypBind [ name Type ]
+      | "datatype" DatBind ("withtype" TypBind)? [ name Datatype ]
+      | "datatype" 'id' "=" "datatype" LongId [ name DatatypeRepl ]
+      | "abstype" DatBind ("withtype" TypBind)? "with" DecList "end" [ name Abstype ]
+      | "exception" ExnBind [ name Exception ]
+      | "structure" StrBind [ name Structure ]
+      | ";" [ name Semicolon ]
+      | "local" DecList "in" DecList "end" [ name Local ]
+      | "open" LongId (LongId)* [ name Open ]
+      | "nonfix" 'id' ('id')* [ name Nonfix ]
+      | "infix" 'int'? 'id' ('id')* [ name Infix ]
+      | "infixr" 'int'? 'id' ('id')* [ name Infixr ]
+
+DecList ::= Dec+ [ name DecList ]
+
+TyVarSeq ::= 'tyvar' [ name One ]
+           | "(" 'tyvar' ("," 'tyvar')* ")" [ name Many ]
+           | [ name Empty ]
+
+// ============================================================
+// Bindings
+// ============================================================
+
+ValBind ::= Pat "=" Exp ("and" ValBind)? [ name ValBind ]
+          | "rec" ValBind [ name Rec ]
+
+FunBind ::= FunMatch ("and" FunBind)? [ name FunBind ]
+
+FunMatch ::= "op"? 'id' Pat (Pat)* (":" Typ)? "=" Exp ("|" FunMatch)? [ name Nonfix ]
+           | Pat 'id' Pat (":" Typ)? "=" Exp ("|" FunMatch)? [ name Infix ]
+           | "(" Pat 'id' Pat ")" (Pat)* (":" Typ)? "=" Exp ("|" FunMatch)? [ name InfixParen ]
+
+TypBind ::= TyVarSeq 'id' "=" Typ ("and" TypBind)? [ name TypBind ]
+
+DatBind ::= TyVarSeq 'id' "=" ConBind ("and" DatBind)? [ name DatBind ]
+
+ConBind ::= 'id' ("of" Typ)? ("|" ConBind)? [ name ConBind ]
+
+ExnBind ::= 'id' ("of" Typ)? ("and" ExnBind)? [ name Gen ]
+          | 'id' "=" LongId ("and" ExnBind)? [ name Repl ]
+
+// ============================================================
+// Structures
+// ============================================================
+
+Str ::= LongId [ name Id ]
+      | "struct" DecList "end" [ name Struct ]
+      | Str ":" SigExp [ name Transparent , prec 1 ]
+      | Str ":>" SigExp [ name Opaque , prec 1 ]
+      | 'id' "(" Str ")" [ name FctApp ]
+      | 'id' "(" DecList ")" [ name FctAppDec ]
+      | "let" DecList "in" Str "end" [ name Let ]
+
+StrBind ::= 'id' SigAnnot? "=" Str ("and" StrBind)? [ name StrBind ]
+
+SigAnnot ::= ":" SigExp [ name Transparent ]
+           | ":>" SigExp [ name Opaque ]
+
+// ============================================================
+// Signatures
+// ============================================================
+
+SigExp ::= 'id' [ name Id ]
+      | "sig" SpecList "end" [ name Sig ]
+      | SigExp "where" "type" TypRefin [ name Where , prec 1 ]
+
+TypRefin ::= TyVarSeq LongId "=" Typ ("and" "type" TypRefin)? [ name TypRefin ]
+
+Spec ::= "val" ValDesc [ name Val ]
+       | "type" TypDesc [ name Type ]
+       | "eqtype" TypDesc [ name Eqtype ]
+       | "type" TypBind [ name TypeAbbrev ]
+       | "datatype" DatDesc [ name Datatype ]
+       | "datatype" 'id' "=" "datatype" LongId [ name DatatypeRepl ]
+       | "exception" ExnDesc [ name Exception ]
+       | "structure" StrDesc [ name Structure ]
+       | ";" [ name Semicolon ]
+       | "include" SigExp [ name Include ]
+       | "include" 'id' ('id')* [ name IncludeMulti ]
+       | Spec "sharing" "type" LongId ("=" LongId)+ [ name SharingType , prec 1 ]
+       | Spec "sharing" LongId ("=" LongId)+ [ name Sharing , prec 1 ]
+
+SpecList ::= Spec+ [ name SpecList ]
+
+ValDesc ::= 'id' ":" Typ ("and" ValDesc)? [ name ValDesc ]
+
+TypDesc ::= TyVarSeq 'id' ("and" TypDesc)? [ name TypDesc ]
+
+DatDesc ::= TyVarSeq 'id' "=" ConDesc ("and" DatDesc)? [ name DatDesc ]
+
+ConDesc ::= 'id' ("of" Typ)? ("|" ConDesc)? [ name ConDesc ]
+
+ExnDesc ::= 'id' ("of" Typ)? ("and" ExnDesc)? [ name ExnDesc ]
+
+StrDesc ::= 'id' ":" SigExp ("and" StrDesc)? [ name StrDesc ]
+
+// ============================================================
+// Programs (top-level)
+// ============================================================
+
+Prog ::= Dec [ name Dec ]
+       | "functor" FctBind [ name Functor ]
+       | "signature" SigBind [ name Signature ]
+       | ";" [ name Semicolon ]
+
+ProgList ::= Prog+ [ name ProgList ]
+
+FctBind ::= 'id' "(" 'id' ":" SigExp ")" SigAnnot? "=" Str ("and" FctBind)? [ name Plain ]
+          | 'id' "(" Spec ")" SigAnnot? "=" Str ("and" FctBind)? [ name Opened ]
+
+SigBind ::= 'id' "=" SigExp ("and" SigBind)? [ name SigBind ]

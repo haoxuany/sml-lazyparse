@@ -3,8 +3,6 @@ structure Grammar =
 
     type id = int
 
-    structure NameMap = SplayDict (structure Key = StringOrdered)
-
     datatype assoc
       = Left
       | Right
@@ -18,28 +16,31 @@ structure Grammar =
       | Postfix
       | Nonfix
 
-    datatype rule
-      = Seq of rule list
-      | Star of rule
-      | Opt of rule
+    datatype spec
+      = Seq of spec list
+      | Star of spec
+      | Plus of spec
+      | Opt of spec
       | Terminal of id
-      | Keyword of string
+      | Keyword of id
       | Nonterminal of id
 
-    type alt =
-      { rule : rule
-      , ruleName : string
+    type rule =
+      { spec : spec
+      , name : string
       , fixity : fixity
       , precedence : precedence
       }
 
-    type definition = { name : id , alts : alt list }
+    type definition = { name : id , rules : rule list }
+
+    structure IdMap = SplayDict (structure Key = IntOrdered)
 
     type grammar =
-      { nonterminalMap : id NameMap.dict
-      , terminalMap : id NameMap.dict
+      { nonterminals : string IdMap.dict
+      , terminals : string IdMap.dict
+      , keywords : string IdMap.dict
       , definitions : definition list
-      , keywords : string list
       }
 
   end

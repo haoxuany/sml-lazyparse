@@ -1,0 +1,81 @@
+%defs (
+  structure A = Ast
+);
+
+%name Ungram;
+
+%tokens
+  : ColonColonEq        ("::=")
+  | Bar                 ("|")
+  | Star                ("*")
+  | Plus                ("+")
+  | Query               ("?")
+  | LParen              ("(")
+  | RParen              (")")
+  | LBracket            ("[")
+  | RBracket            ("]")
+  | Comma               (",")
+  | AssocLeft           ("left")
+  | AssocRight          ("right")
+  | AssocNone           ("none")
+  | RuleName            ("name")
+  | Assoc             ("assoc")
+  | Prec              ("prec")
+  | StringLiteral of string
+  | Terminal of string
+  | Int of int
+  | Ident of string
+  ;
+
+Grammar
+  : Definition* => ({ definitions = Definition } : A.grammar)
+  ;
+
+Definition
+  : Ident "::=" "|"? Rule ("|" Rule)* => ({ name = Ident , rule = Rule :: SR } : A.definition)
+  ;
+
+Properties
+  : "[" ","? Property ("," Property)* ","? "]"
+    => (Property :: SR)
+  ;
+
+Rule
+  : SeqRule Properties
+    => (SeqRule , Properties)
+  | Properties
+    => (A.Seq nil , Properties)
+  ;
+
+SeqRule
+  : PostfixRule+ => (case PostfixRule
+                       of [single] => single
+                        | items => A.Seq items)
+  ;
+
+PostfixRule
+  : AtomRule ("*" => (A.Star AtomRule)
+             | "+" => (A.Plus AtomRule)
+             | "?" => (A.Opt AtomRule)
+             | => (AtomRule))
+    => (SR)
+  ;
+
+AtomRule
+  : Ident               => (A.Nonterminal Ident)
+  | StringLiteral       => (A.Keyword StringLiteral)
+  | Terminal             => (A.Terminal Terminal)
+  | "(" SeqRule ")"     => (SeqRule)
+  ;
+
+Property
+  : "assoc" AssocKind    => (A.Assoc AssocKind)
+  | "prec" Int           => (A.Prec Int)
+  | "name" Ident         => (A.RuleName Ident)
+  ;
+
+AssocKind
+  : "left"               => (A.Left)
+  | "right"              => (A.Right)
+  | "none"               => (A.None)
+  ;

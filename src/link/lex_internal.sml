@@ -84,7 +84,7 @@ functor LexInternal (
     )
     (others :
       ((char Stream.stream * Annot.pos) ->
-       ('c * Annot.span * char Stream.stream * Annot.pos) option
+       ('c * char Stream.stream * Annot.pos) option
       ) list
     ) : ('a , 'b , 'c) token Stream.stream =
     let
@@ -123,18 +123,23 @@ functor LexInternal (
           NONE => NONE
         | SOME (v , s , pos) => SOME (v , (s , pos))
 
-      (* try the other terminal lexers, first match wins *)
       fun tryOthers (ts : TS.stream)
-        : ('c * Annot.span * TS.stream) option =
-        let
-          fun go nil = NONE
-            | go (lexer :: rest) =
-                case lexer ts of
-                  SOME (v , sp , s , pos) => SOME (v , sp , (s , pos))
-                | NONE => go rest
-        in
-          go others
-        end
+        : ('c * TS.stream) option =
+        List.foldl
+          (fn (lexer , best) =>
+            case lexer ts of
+              NONE => best
+            | SOME (v , s , endpos) =>
+                let val candidate = (v , (s , endpos))
+                in
+                  case best of
+                    NONE => SOME candidate
+                  | SOME ( _ , ( _ , bestPos )) =>
+                      case Annot.compare (endpos , bestPos) of
+                        GREATER => SOME candidate
+                      | _ => best
+                end)
+          NONE others
 
       (* main lexing loop, produces a token stream *)
       fun go (ts : TS.stream) : ('a , 'b , 'c) token Stream.front =
@@ -142,31 +147,44 @@ functor LexInternal (
         in
           case TS.front ts of
             ( TS.Nil , _ ) => Stream.Nil
-          | ( TS.Cons ( c , rest ) , _ ) =>
-              (* 1. try keywords *)
-              case tryKeywords ts of
-                SOME (v , ts) =>
-                  let val ( _ , endpos ) = ts
-                  in Stream.Cons ( TokenKeyword (v , Annot.span pos endpos)
-                                 , Stream.lazy (fn () => go ts) )
-                  end
-              | NONE =>
-              (* 2. try trivial *)
-              case tryTrivial ts of
-                SOME (v , ts) =>
-                  let val ( _ , endpos ) = ts
-                  in Stream.Cons ( TokenTrivial (v , Annot.span pos endpos)
-                                 , Stream.lazy (fn () => go ts) )
-                  end
-              | NONE =>
-              (* 3. try other terminals *)
-              case tryOthers ts of
-                SOME (v , sp , ts) =>
-                  Stream.Cons ( TokenOther (v , sp)
-                              , Stream.lazy (fn () => go ts) )
-              | NONE =>
-              (* 4. unrecognized character *)
-              raise LexError (c , pos)
+          | ( TS.Cons ( c , _ ) , _ ) =>
+              let
+                val keyword =
+                  case tryKeywords ts of
+                    SOME (v , ts' as ( _ , endpos )) =>
+                      SOME (TokenKeyword (v , Annot.span pos endpos) , endpos , ts')
+                  | NONE => NONE
+
+                val trivial =
+                  case tryTrivial ts of
+                    SOME (v , ts' as ( _ , endpos )) =>
+                      SOME (TokenTrivial (v , Annot.span pos endpos) , endpos , ts')
+                  | NONE => NONE
+
+                val other =
+                  case tryOthers ts of
+                    SOME (v , ts' as ( _ , endpos )) =>
+                      SOME (TokenOther (v , Annot.span pos endpos) , endpos , ts')
+                  | NONE => NONE
+
+                val candidates =
+                  List.mapPartial (fn x => x) [keyword , trivial , other]
+              in
+                case candidates of
+                  nil => raise LexError (c , pos)
+                | first :: rest =>
+                    let
+                      val (tok , _ , ts') =
+                        List.foldl
+                          (fn (candidate as ( _ , candidatePos , _ ) , acc as ( _ , accPos , _ )) =>
+                            case Annot.compare (candidatePos , accPos) of
+                              GREATER => candidate
+                            | _ => acc)
+                          first rest
+                    in
+                      Stream.Cons (tok , Stream.lazy (fn () => go ts'))
+                    end
+              end
         end
     in
       Stream.lazy (fn () => go ts)

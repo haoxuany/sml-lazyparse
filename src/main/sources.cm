@@ -5,6 +5,7 @@ group is
 
   ../ast/sources.cm
   ../parse/sources.cm
+  ../compile/sources.cm
   ../codegen/sources.cm
 
   main.sml

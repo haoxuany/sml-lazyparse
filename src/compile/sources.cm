@@ -1,0 +1,10 @@
+library
+  structure IL
+  structure Compile
+is
+  ../../lib/cmlib/cmlib.cm
+
+  ../ast/sources.cm
+
+  il.sml
+  compile.sml
