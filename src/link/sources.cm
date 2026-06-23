@@ -1,13 +1,16 @@
 library
   structure Annot
   functor LexInternal
+  functor ParseInternal
   structure PrintBuffer
   signature TERMINAL
   signature TERMINAL_PRINTABLE
 is
   ../../lib/cmlib/cmlib.cm
+  ../../lib/sml-parcom/parcom.cm
 
   annot.sml
   lex_internal.sml
+  parse_internal.sml
   print_buffer.sml
   terminal.sig.sml

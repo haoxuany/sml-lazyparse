@@ -4,5 +4,7 @@ is
   ../../lib/cmlib/cmlib.cm
 
   ../ast/sources.cm
+  ../compile/sources.cm
+  ../link/sources.cm
 
   codegen.sml

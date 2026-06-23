@@ -31,6 +31,11 @@ structure Annot = struct
     , finish = b
     }
 
+  fun join ({ start , ... } : span) ({ finish , ... } : span) : span =
+    { start = start
+    , finish = finish
+    }
+
   fun length
     ({ start = { pos = a_pos , ... } : pos , finish = { pos = b_pos , ... } : pos } : span)
     = b_pos - a_pos

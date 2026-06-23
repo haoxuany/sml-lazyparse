@@ -10,26 +10,24 @@ structure Grammar =
 
     type precedence = int
 
-    datatype fixity
-      = Infix of assoc
-      | Prefix
-      | Postfix
-      | Nonfix
-
-    datatype spec
-      = Seq of spec list
-      | Star of spec
-      | Plus of spec
-      | Opt of spec
+    datatype inner
+      = Seq of inner list
+      | Star of inner
+      | Plus of inner
+      | Opt of inner
       | Terminal of id
       | Keyword of id
       | Nonterminal of id
 
+    datatype spec
+      = Infix of inner list * assoc * precedence
+      | Prefix of inner list * precedence
+      | Postfix of inner list * precedence
+      | Nonfix of inner list
+
     type rule =
       { spec : spec
       , name : string
-      , fixity : fixity
-      , precedence : precedence
       }
 
     type definition = { name : id , rules : rule list }

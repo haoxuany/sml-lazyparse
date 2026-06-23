@@ -6,103 +6,195 @@ structure Compile :
 
     structure G = Grammar
     structure I = IL
-
-    fun compileSpec defId spec =
-      case spec of
-        G.Seq rs => I.Seq (List.map (compileSpec defId) rs)
-      | G.Star r => I.Star (compileSpec defId r)
-      | G.Plus r => I.Plus (compileSpec defId r)
-      | G.Opt r => I.Opt (compileSpec defId r)
-      | G.Terminal id => I.Terminal id
-      | G.Keyword id => I.Keyword id
-      | G.Nonterminal id =>
-          if id = defId
-          then I.Ref I.Self
-          else I.Ref (I.Other id)
-
-    fun flattenSpec r =
-      case r of
-        I.Seq rs => List.concatMap flattenSpec rs
-      | _ => [r]
-
-    fun compileRule defId ({ name , spec , ... } : G.rule) =
-      { name = name
-      , spec = compileSpec defId spec
-      }
-
     structure IntMap = SplayDict (structure Key = IntOrdered)
 
-    fun compileDef ({ name = defId , rules } : G.definition) =
-      let
-        val (nonfixRules , fixityRules) =
-          List.partition
-            (fn ({ fixity , ... } : G.rule) =>
-              case fixity of
-                G.Nonfix => true
-              | _ => false)
-            rules
-
-        val atoms = List.map (compileRule defId) nonfixRules
-
-        fun isLeftRecursive ({ fixity , ... } : G.rule) =
-          case fixity of
-            G.Postfix => true
-          | G.Infix G.Left => true
-          | _ => false
-
-        val precGroups =
-          List.foldl
-            (fn (rule as { precedence , ... } : G.rule , m) =>
-              IntMap.insertMerge m precedence [rule] (fn l => l @ [rule]))
-            IntMap.empty
-            fixityRules
-
-        val levels =
-          List.map
-            (fn (prec , group) =>
-              let
-                val compiled =
-                  List.map
-                    (fn rule =>
-                      let
-                        val { name , spec } = compileRule defId rule
-                        val flat = flattenSpec spec
-                        val isLeft = isLeftRecursive rule
-                        val last = List.length flat - 1
-
-                        fun resolve (i , elem) =
-                          case elem of
-                            I.Ref I.Self =>
-                              if i = 0 andalso isLeft then I.Ref I.Self
-                              else if i = last andalso not isLeft then I.Ref I.Self
-                              else I.Ref I.Higher
-                          | I.Seq rs => I.Seq (List.mapi resolve rs)
-                          | I.Star r => I.Star (resolve (0 , r))
-                          | I.Plus r => I.Plus (resolve (0 , r))
-                          | I.Opt r => I.Opt (resolve (0 , r))
-                          | _ => elem
-                      in
-                        { name = name
-                        , spec = I.Seq (List.mapi resolve flat)
-                        }
-                      end)
-                    group
-              in
-                { precedence = prec , rules = compiled }
-              end)
-            (List.rev (IntMap.toList precGroups))
-      in
-        { name = defId
-        , atoms = atoms
-        , levels = levels
-        }
-      end
+    datatype fixity =
+      Infix of G.inner list * G.assoc
+    | Prefix of G.inner list
+    | Postfix of G.inner list
+    | Nonfix of G.inner list
 
     fun compile ({ nonterminals , terminals , definitions , keywords } : G.grammar) =
-      { nonterminals = nonterminals
-      , terminals = terminals
-      , keywords = keywords
-      , definitions = List.map compileDef definitions
-      }
+      let
+        val datatypes =
+          let
+            fun ruleTypes inner =
+              let
+                fun wrap f tys =
+                  case tys of
+                    nil => nil
+                  | [t] => [f t]
+                  | ts => [f (I.TyTuple ts)]
+              in
+                case inner of
+                  G.Seq rs => wrap (fn x => x) (List.concatMap ruleTypes rs)
+                | G.Star r => wrap I.TyList (ruleTypes r)
+                | G.Plus r => wrap I.TyList (ruleTypes r)
+                | G.Opt r => wrap I.TyOption (ruleTypes r)
+                | G.Terminal id => [I.TyTerminal id]
+                | G.Keyword _ => nil
+                | G.Nonterminal id => [I.TyNonterminal id]
+              end
+
+            fun specTypes defName spec =
+              case spec of
+                G.Nonfix inners => List.concatMap ruleTypes inners
+              | G.Infix ( inners , _ , _ ) =>
+                  List.concat
+                  [ [I.TyNonterminal defName]
+                  , List.concatMap ruleTypes inners
+                  , [I.TyNonterminal defName]
+                  ]
+              | G.Prefix ( inners , _ ) =>
+                  List.concatMap ruleTypes inners
+                  @ [I.TyNonterminal defName]
+              | G.Postfix ( inners , _ ) =>
+                  ( I.TyNonterminal defName ) :: ( List.concatMap ruleTypes inners )
+          in
+            List.map
+              (fn { name , rules } =>
+                { id = name
+                , rules =
+                    List.map
+                      (fn { name = ruleName , spec } : G.rule =>
+                        { name = ruleName , ty = specTypes name spec })
+                      rules
+                })
+              definitions
+          end
+
+        val definitions =
+          List.map
+            (fn ( { name , rules } : G.definition ) =>
+              let
+                fun compileInners idx args allVars inners cont =
+                  case inners of
+                    nil => cont ( idx , args , allVars )
+                  | inner :: rest =>
+                      compileBind idx args allVars inner (fn ( idx , args , allVars ) =>
+                        compileInners idx args allVars rest cont)
+
+                and compileBind idx args allVars inner cont =
+                  let
+                    fun sub wrap inners =
+                      let
+                        val subCmd =
+                          compileInners (idx + 1) nil nil inners (fn ( _ , args , allVars ) =>
+                            I.Return { args = List.rev args
+                                     , allVars = List.rev allVars })
+                      in
+                        I.Bind { var = idx , parser = wrap subCmd
+                               , andthen = cont ( idx + 1 , idx :: args , idx :: allVars ) }
+                      end
+                  in
+                    case inner of
+                      G.Keyword id =>
+                        I.Bind { var = idx , parser = I.Keyword id
+                               , andthen = cont ( idx + 1 , args , idx :: allVars ) }
+                    | G.Terminal id =>
+                        I.Bind { var = idx , parser = I.Terminal id
+                               , andthen = cont ( idx + 1 , idx :: args , idx :: allVars ) }
+                    | G.Nonterminal id =>
+                        I.Bind { var = idx , parser = I.Ref (I.Other id)
+                               , andthen = cont ( idx + 1 , idx :: args , idx :: allVars ) }
+                    | G.Star r => sub I.Star [r]
+                    | G.Plus r => sub I.Plus [r]
+                    | G.Opt r => sub I.Opt [r]
+                    | G.Seq rs => sub I.Seq rs
+                  end
+
+                fun compileRule { name = ruleName , fixity } =
+                  let
+                    val cmd =
+                      case fixity of
+                        Nonfix inners =>
+                          compileInners 0 nil nil inners (fn ( _ , args , allVars ) =>
+                            I.Return { args = List.rev args
+                                     , allVars = List.rev allVars })
+                      | Infix ( inners , assoc ) =>
+                          let
+                            val ( leftRef , rightRef ) =
+                              case assoc of
+                                G.Left => ( I.Self , I.Higher )
+                              | G.Right => ( I.Higher , I.Self )
+                              | G.None => ( I.Higher , I.Higher )
+                          in
+                            I.Bind { var = 0 , parser = I.Ref leftRef
+                                   , andthen =
+                              compileInners 1 [0] [0] inners (fn ( idx , args , allVars ) =>
+                                I.Bind { var = idx , parser = I.Ref rightRef
+                                       , andthen =
+                                  I.Return { args = List.rev (idx :: args)
+                                           , allVars = List.rev (idx :: allVars) } }) }
+                          end
+                      | Prefix inners =>
+                          compileInners 0 nil nil inners (fn ( idx , args , allVars ) =>
+                            I.Bind { var = idx , parser = I.Ref I.Self
+                                   , andthen =
+                              I.Return { args = List.rev (idx :: args)
+                                       , allVars = List.rev (idx :: allVars) } })
+                      | Postfix inners =>
+                          I.Bind { var = 0 , parser = I.Ref I.Self
+                                 , andthen =
+                            compileInners 1 [0] [0] inners (fn ( _ , args , allVars ) =>
+                              I.Return { args = List.rev args
+                                       , allVars = List.rev allVars }) }
+                  in
+                    { name = ruleName
+                    , cmd = cmd
+                    }
+                  end
+
+                val ( nonfixRules , fixityRules ) =
+                  List.foldl
+                    (fn ( { spec , name } : G.rule , ( nonfixRules , fixityRules ) ) =>
+                      let
+                        fun insert p fixity =
+                          ( nonfixRules
+                          , IntMap.insertMerge fixityRules p
+                              [{ name = name , fixity = fixity }]
+                              (fn l => { name = name , fixity = fixity } :: l)
+                          )
+                      in
+                        case spec of
+                          G.Infix ( inner , assoc , p ) =>
+                            insert p ( Infix ( inner , assoc ) )
+                        | G.Prefix ( inner , p ) =>
+                            insert p ( Prefix inner )
+                        | G.Postfix ( inner , p ) =>
+                            insert p ( Postfix inner )
+                        | G.Nonfix inner =>
+                            ( { name = name , fixity = Nonfix inner } :: nonfixRules
+                            , fixityRules
+                            )
+                      end)
+                    ( nil , IntMap.empty )
+                    rules
+
+                val atoms = List.map compileRule nonfixRules
+
+                val levels =
+                  List.map
+                    (fn ( prec , group ) =>
+                      { precedence = prec
+                      , rules = List.map compileRule group
+                      })
+                    (List.rev (IntMap.toList fixityRules))
+              in
+                { name = name
+                , atoms = atoms
+                , levels = levels
+                }
+              end)
+            definitions
+
+      in
+        { nonterminals = nonterminals
+        , terminals = terminals
+        , keywords = keywords
+        , datatypes = datatypes
+        , definitions = definitions
+        }
+      end
 
   end

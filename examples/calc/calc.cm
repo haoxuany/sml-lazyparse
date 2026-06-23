@@ -5,4 +5,3 @@ group is
   ../../src/link/sources.cm
 
   calc.sml
-  calc_parser.sml

@@ -31,7 +31,7 @@ structure Main = struct
         handle Parse.LexError msg => die msg
       val _ = TextIO.closeIn ins
     in
-      Codegen.codegen name (Elaboration.elaborate result)
+      Codegen.codegen name (Compile.compile (Elaboration.elaborate result))
         handle Elaboration.UnboundNonterminal s =>
           die (String.concat ["unbound nonterminal '" , s , "'"])
         | Elaboration.MissingRuleName =>

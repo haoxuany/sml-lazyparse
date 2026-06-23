@@ -1,5 +1,5 @@
 Stmt ::= Exp [ name Exp ]
-       | "if" Exp "then" Stmt "else" Stmt [ name IfThenElse ]
+       | "if" Exp ( "then" Stmt "else" Stmt ) [ name IfThenElse ]
 
 Exp ::= Exp "+" Exp [ name Plus , assoc left , prec 1 ]
       | Exp "-" Exp [ name Minus , assoc left , prec 1 ]

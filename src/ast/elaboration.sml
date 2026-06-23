@@ -87,7 +87,7 @@ structure Elaboration :
           buildTwoSided (List.mapi (fn v => v) (StringSet.toList keywords))
 
         (* Pass 2: elaborate *)
-        fun elabRule defId (spec , props) =
+        fun elabRule defName (spec , props) =
           let
             (* extract properties *)
             val name = ref NONE
@@ -128,65 +128,128 @@ structure Elaboration :
               | A.Terminal s => G.Terminal (lookupTerminal s)
               | A.Keyword s => G.Keyword (lookupKeyword s)
               | A.Nonterminal name => G.Nonterminal (lookupNonterminal name)
-
             val spec = elabSpec spec
 
             fun flatten r =
               case r of
-                G.Seq rs => List.concatMap flatten rs
-              | _ => [r]
+                G.Seq [ single ] => flatten single
+              | G.Seq r => G.Seq (List.map flatten r)
+              | G.Star r => G.Star (flatten r)
+              | G.Plus r => G.Plus (flatten r)
+              | G.Opt r => G.Opt (flatten r)
+              | _ => r
 
-            val flat = flatten spec
+            val spec =
+              case flatten spec of
+                G.Seq r => r
+              | r => [ r ]
 
-            fun isSelfRef r =
-              case r of
-                G.Nonterminal id => id = defId
-              | _ => false
+            val spec =
+              let
+                val defaultPrec = 5
 
-            fun prec p =
-              case p of
-                NONE => 5 (* default *)
-              | SOME p => p
+                fun nonfix' () =
+                  let 
+                    val () =
+                      case assoc of 
+                        SOME _ =>
+                          raise InvalidAssociativity
+                            (String.concat
+                              ["rule '" , name , "' has associativity but is nonfix (not infix)"])
+                      | NONE => ()
+                    val () =
+                      case precedence of 
+                        SOME _ =>
+                          raise InvalidAssociativity
+                            (String.concat
+                              ["rule '" , name , "' is nonfix so precedence rules don't apply"])
+                      | NONE => ()
+                  in
+                    G.Nonfix spec
+                  end
 
-            val (fixity , precedence) =
-              case flat of
-                nil => (G.Nonfix , 0)
-              | _ =>
-                  case
-                    ( isSelfRef (List.hd flat)
-                    , isSelfRef (List.last flat)
-                    , assoc
-                    , precedence
-                    ) of
-                    (true , true , SOME a , p) =>
-                      (G.Infix a , prec p)
-                  | (true , true , NONE , p) =>
-                      (G.Infix G.Left , prec p) (* default *)
-                  | (false , _ , SOME _ , _) =>
-                      raise InvalidAssociativity
-                        (String.concat
-                          ["rule '" , name , "' has associativity but is not infix"])
-                  | (_ , false , SOME _ , _) =>
-                      raise InvalidAssociativity
-                        (String.concat
-                          ["rule '" , name , "' has associativity but is not infix"])
-                  | (true , false , NONE , p) =>
-                      (G.Postfix , prec p)
-                  | (false , true , NONE , p) =>
-                      (G.Prefix , prec p)
-                  | (false , false , NONE , NONE) =>
-                      (G.Nonfix , 0)
-                  | (false , false , NONE , SOME _) =>
-                      raise InvalidAssociativity
-                        (String.concat
-                          [ "rule '" , name
-                          , "' has precedence but is nonfix, so precedence rules don't apply"
-                          ])
+                fun infix' inner =
+                  let 
+                    val assoc =
+                      case assoc of 
+                        SOME v => v
+                      | NONE => G.Left
+                    val precedence =
+                      case precedence of 
+                        SOME v => v
+                      | NONE => defaultPrec
+                  in
+                    G.Infix ( inner , assoc , precedence )
+                  end
+
+                fun prefix' inner =
+                  let 
+                    val () =
+                      case assoc of 
+                        SOME _ =>
+                          raise InvalidAssociativity
+                            (String.concat
+                              ["rule '" , name , "' has associativity but is prefix (not infix)"])
+                      | NONE => ()
+                    val precedence =
+                      case precedence of 
+                        SOME v => v
+                      | NONE => defaultPrec
+                  in
+                    G.Prefix ( inner , precedence )
+                  end
+
+                fun postfix' inner = 
+                  let 
+                    val () =
+                      case assoc of 
+                        SOME _ =>
+                          raise InvalidAssociativity
+                            (String.concat
+                              ["rule '" , name , "' has associativity but is postfix (not infix)"])
+                      | NONE => ()
+                    val precedence =
+                      case precedence of 
+                        SOME v => v
+                      | NONE => defaultPrec
+                  in
+                    G.Postfix ( inner , precedence )
+                  end
+              in
+                case spec of
+                  nil =>  nonfix' ()
+                | [ single ] => nonfix' ()
+                | hd :: tl =>
+                    ( case ( hd , List.rev tl ) of
+                        ( _ , nil ) => raise Fail "Impossible"
+                      | ( G.Nonterminal id , ( G.Nonterminal id2 ) :: rest ) =>
+                          ( case ( id = defName , id2 = defName ) of
+                               ( true , true ) =>
+                                 infix' (List.rev rest)
+                            | ( true , false ) =>
+                                postfix' tl
+                            | ( false , true ) =>
+                                prefix' ( hd :: ( List.rev rest ) )
+                            | ( false , false ) =>
+                                nonfix' ()
+                          )
+                      | ( G.Nonterminal id , _ ) =>
+                          if id = defName then
+                            postfix' tl
+                          else 
+                            nonfix' ()
+                      | ( _ , ( G.Nonterminal id2 ) :: rest ) =>
+                          if id2 = defName then
+                            prefix' ( hd :: ( List.rev rest ) ) 
+                          else
+                            nonfix' ()
+                      | _ => 
+                          nonfix' ()
+                    )
+              end
           in
             { spec = spec
             , name = name
-            , fixity = fixity
-            , precedence = precedence
             }
           end
 
