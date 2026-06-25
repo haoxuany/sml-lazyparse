@@ -78,13 +78,22 @@ structure Compile :
                   let
                     fun sub wrap inners =
                       let
+                        val meaningfulArgs = ref false 
+                        (* if this is some variation of unit, ignore *)
                         val subCmd =
                           compileInners (idx + 1) nil nil inners (fn ( _ , args , allVars ) =>
-                            I.Return { args = List.rev args
-                                     , allVars = List.rev allVars })
+                            ( if List.length args > 0
+                              then meaningfulArgs := true
+                              else ()
+                            ; I.Return { args = List.rev args
+                                       , allVars = List.rev allVars }))
                       in
-                        I.Bind { var = idx , parser = wrap subCmd
-                               , andthen = cont ( idx + 1 , idx :: args , idx :: allVars ) }
+                        if !meaningfulArgs then
+                          I.Bind { var = idx , parser = wrap subCmd
+                                 , andthen = cont ( idx + 1 , idx :: args , idx :: allVars ) }
+                        else
+                          I.Bind { var = idx , parser = wrap subCmd
+                                 , andthen = cont ( idx + 1 , args , idx :: allVars ) }
                       end
                   in
                     case inner of

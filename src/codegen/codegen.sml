@@ -1,6 +1,6 @@
 structure Codegen :
   sig
-    val codegen : string -> IL.t -> unit
+    val codegen : { dir : string , name : string } -> IL.t -> unit
   end =
   struct
 
@@ -9,97 +9,75 @@ structure Codegen :
 
     fun toSnakeCase s =
       let
-        fun go ( nil , _ ) = nil
-          | go ( c :: cs , isFirst ) =
+        fun toSnakeCase x =
+          case x of
+            ( nil , _ ) => nil
+          | ( c :: cs , isFirst ) =>
               if Char.isUpper c
               then if isFirst
-                   then Char.toLower c :: go ( cs , false )
-                   else #"_" :: Char.toLower c :: go ( cs , false )
-              else c :: go ( cs , false )
+                   then Char.toLower c :: toSnakeCase ( cs , false )
+                   else #"_" :: Char.toLower c :: toSnakeCase ( cs , false )
+              else c :: toSnakeCase ( cs , false )
       in
-        String.implode (go ( String.explode s , true ))
+        String.implode (toSnakeCase ( String.explode s , true ))
       end
 
-    fun toPascalCase s =
+    fun toModuleCase s =
       let
-        fun go ( nil , _ ) = nil
-          | go ( #"_" :: cs , _ ) = go ( cs , true )
-          | go ( c :: cs , true ) = Char.toUpper c :: go ( cs , false )
-          | go ( c :: cs , false ) = c :: go ( cs , false )
+        fun toModuleCase x =
+          case x of
+            ( nil , _ ) => nil
+          | ( #"_" :: cs , _ ) => toModuleCase ( cs , true )
+          | ( c :: cs , true ) => Char.toUpper c :: toModuleCase ( cs , false )
+          | ( c :: cs , false ) => c :: toModuleCase ( cs , false )
       in
-        String.implode (go ( String.explode s , true ))
+        String.implode (toModuleCase ( String.explode s , true ))
       end
+
+    fun toUpperCase s = String.map Char.toUpper s
 
     fun nameOfId ( m : string IM.dict ) id =
       case IM.find m id of
         SOME name => name
-      | NONE => raise Fail "unknown id"
+      | NONE => raise Fail "Impossible"
 
-    fun codegen ( name : string ) ( { nonterminals , terminals , keywords , datatypes , definitions } : I.t ) =
+    fun codegen ( { dir , name } : { dir : string , name : string } )
+      ( { nonterminals , terminals , keywords , datatypes , definitions } : I.t ) =
       let
-        val filename = name ^ ".sml"
-        val functorName = toPascalCase name
-        val out = TextIO.openOut filename
+        val sigName = String.concat [toUpperCase (toSnakeCase name) , "_AST"]
+        val out = TextIO.openOut (OS.Path.joinDirFile { dir = dir , file = name ^ ".sml" })
+
         val pp = PrettyPrint.makeStream out 80
         open PrettyPrint
+        val print = fn l => print pp (String.concat l)
+        fun break () = PrettyPrint.break pp 0
+        val newline = fn () => PrettyPrint.newline pp
 
-        val terminalNames = List.map (fn ( _ , name ) => name) (IM.toList terminals)
-
-        val keywordList = IM.toList keywords
+        val terminalNames =
+          List.map (fn ( _ , name ) => name) (IM.toList terminals)
 
         fun ntName id = nameOfId nonterminals id
         fun ntSnake id = toSnakeCase (ntName id)
-        fun ntPascal id = toPascalCase (ntName id)
-        fun tName id = nameOfId terminals id
-        fun tPascal id = toPascalCase (tName id)
-        fun kwName id = nameOfId keywords id
+        fun ntModule id = toModuleCase (ntName id)
+        fun tModule id = toModuleCase (nameOfId terminals id)
+        fun tSnake id = toSnakeCase (nameOfId terminals id)
 
         fun varName v = String.concat ["v" , Int.toString v]
 
         val terminalWhere = "TERMINAL where type 'a stream = 'a Stream.stream"
-        val terminalPrintableWhere = "TERMINAL_PRINTABLE where type 'a stream = 'a Stream.stream"
 
         fun tyToString ty =
           case ty of
-            I.TyTerminal id =>
-              String.concat ["Terminals." , tPascal id , ".t annot"]
+            I.TyTerminal id => tSnake id ^ " annot"
           | I.TyNonterminal id => ntSnake id
           | I.TyList t => tyToString t ^ " list"
           | I.TyOption t => tyToString t ^ " option"
           | I.TyTuple ts =>
               String.concat ["(" , String.concatWith " * " (List.map tyToString ts) , ")"]
 
-        fun emitFunctorHeader () =
-          ( openBox pp Vertical 2
-          ; print pp (String.concat ["functor " , functorName , " ("])
-          ; break pp 0
-          ; print pp "val table_size : int"
-          ; break pp 0
-          ; print pp "structure Stream : STREAM"
-          ; break pp 0
-          ; print pp "structure Trivial : "
-          ; print pp terminalWhere
-          ; break pp 0
-          ; openBox pp Vertical 2
-          ; print pp "structure Terminals : sig"
-          ; List.app
-              (fn name =>
-                ( break pp 0
-                ; print pp (String.concat ["structure " , toPascalCase name , " : " , terminalPrintableWhere])
-                ))
-              terminalNames
-          ; closeBox pp
-          ; break pp 0
-          ; print pp "end"
-          ; closeBox pp
-          ; break pp 0
-          ; print pp ") :>"
-          ; break pp 0
-          )
-
-        fun emitConstructor defName ( { name , ty } : { name : string , ty : I.ty list } ) =
+        fun constructorStr defName ( { name , ty } : { name : string , ty : I.ty list } ) =
           let
-            val conName = toPascalCase defName ^ name
+            val conName = toModuleCase defName ^ name
             val types = List.map tyToString ty
           in
             case types of
@@ -107,49 +85,22 @@ structure Codegen :
             | _ => String.concat [conName , " of " , String.concatWith " * " types]
           end
 
-        fun emitDatatype isFirst ( { id , rules } : { id : I.id , rules : { name : string , ty : I.ty list } list } ) =
-          let
-            val defName = ntName id
-            val keyword = if isFirst then "datatype" else "and"
-            val cons = List.map (emitConstructor defName) rules
-          in
-            case cons of
-              nil => ()
-            | first :: rest =>
-                ( openBox pp Vertical 2
-                ; print pp (String.concat [keyword , " " , ntSnake id , "' = " , first])
-                ; List.app (fn c => ( break pp 0 ; print pp (String.concat ["| " , c]) )) rest
-                ; closeBox pp
-                ; break pp 0
-                )
-          end
-
-        fun emitWithtype isFirst id =
-          let
-            val keyword = if isFirst then "withtype" else "and"
-          in
-            print pp (String.concat [keyword , " " , ntSnake id , " = " , ntSnake id , "' annot"]);
-            break pp 0
-          end
-
-        fun emitSealSig () =
-          ( openBox pp Vertical 2
-          ; print pp "sig"
-          ; break pp 0
-          ; print pp "type 'a annot = { node : 'a , span : Annot.span }"
-          ; break pp 0
-          ; List.appi
+        fun emitDatatypes () =
+          ( List.appi
               (fn ( i , { id , rules } ) =>
                 let
+                  val defName = ntName id
                   val keyword = if i = 0 then "datatype" else "and"
-                  val cons = List.map (emitConstructor (ntName id)) rules
+                  val cons = List.map (constructorStr defName) rules
                 in
                   case cons of
                     nil => ()
                   | first :: rest =>
-                      ( print pp (String.concat [keyword , " " , ntSnake id , "' = " , first])
-                      ; List.app (fn c => ( break pp 0 ; print pp (String.concat ["| " , c]) )) rest
-                      ; break pp 0
+                      ( openBox pp Vertical 2
+                      ; print [keyword , " " , ntSnake id , "' = " , first]
+                      ; List.app (fn c => ( break () ; print ["| " , c] )) rest
+                      ; closeBox pp
+                      ; break ()
                       )
                 end)
               datatypes
@@ -157,42 +108,16 @@ structure Codegen :
               (fn ( i , { id , ... } : { id : I.id , rules : { name : string , ty : I.ty list } list } ) =>
                 let val keyword = if i = 0 then "withtype" else "and"
                 in
-                  print pp (String.concat [keyword , " " , ntSnake id , " = " , ntSnake id , "' annot"]);
-                  break pp 0
+                  print [keyword , " " , ntSnake id , " = " , ntSnake id , "' annot"]
+                  ; break ()
                 end)
               datatypes
-          ; break pp 0
-          ; print pp "type 'a parser"
-          ; break pp 0
-          ; print pp "type token_stream"
-          ; break pp 0
-          ; print pp "val lex : char Stream.stream -> Annot.pos -> token_stream"
-          ; break pp 0
-          ; List.app
-              (fn { name , ... } : I.definition =>
-                ( print pp (String.concat ["val parse" , ntPascal name , " : " , ntSnake name , " parser"])
-                ; break pp 0
-                ))
-              definitions
-          ; print pp "val parse : 'a parser -> token_stream -> ('a * token_stream) list"
-          ; closeBox pp
-          ; break pp 0
-          ; print pp "end ="
           )
-
-        fun emitBackpatchRefs () =
-          List.app
-            (fn { name , ... } : I.definition =>
-              ( print pp (String.concat
-                  ["  val parse" , ntPascal name , "Dummy : " , ntSnake name , " t_dummy = dummy ()"])
-              ; break pp 0
-              ))
-            definitions
 
         fun parserCode selfRef higherRef parser =
           case parser of
             I.Terminal tid =>
-              String.concat ["(parseTerminal" , tPascal tid , ")"]
+              String.concat ["(parseTerminal" , tModule tid , ")"]
           | I.Keyword kid =>
               String.concat ["(keyword " , Int.toString kid , ")"]
           | I.Ref I.Self =>
@@ -200,21 +125,21 @@ structure Codegen :
           | I.Ref I.Higher =>
               String.concat ["(parseNonterminal " , higherRef , ")"]
           | I.Ref (I.Other nid) =>
-              String.concat ["(parseNonterminal (deref parse" , ntPascal nid , "Dummy))"]
+              String.concat ["(parseNonterminal (deref parse" , ntModule nid , "Dummy))"]
           | _ => raise Fail "parserCode: sub-parser should be handled by emitBind"
 
         fun emitBind indent selfRef higherRef var parser emitRest =
           let
             fun emitSubCmd wrapName subCmd =
-              ( print pp (String.concat [indent , "bind (" , wrapName , " ("]);
-                newline pp;
-                emitCmdBody (indent ^ "  ") selfRef higherRef subCmd;
-                print pp "))";
-                newline pp;
-                print pp (String.concat [indent , "(fn " , varName var , " =>"]);
-                newline pp;
-                emitRest ();
-                print pp ")"
+              ( print [indent , "bind (" , wrapName , " ("]
+              ; newline ()
+              ; emitCmdBody (indent ^ "  ") selfRef higherRef subCmd
+              ; print ["))"]
+              ; newline ()
+              ; print [indent , "(fn " , varName var , " =>"]
+              ; newline ()
+              ; emitRest ()
+              ; print [")"]
               )
           in
             case parser of
@@ -222,23 +147,23 @@ structure Codegen :
             | I.Plus subCmd => emitSubCmd "plusLongest" subCmd
             | I.Opt subCmd => emitSubCmd "optionalLongest" subCmd
             | I.Seq subCmd =>
-                ( print pp (String.concat [indent , "bind ("]);
-                  newline pp;
-                  emitCmdBody (indent ^ "  ") selfRef higherRef subCmd;
-                  print pp ")";
-                  newline pp;
-                  print pp (String.concat [indent , "(fn " , varName var , " =>"]);
-                  newline pp;
-                  emitRest ();
-                  print pp ")"
+                ( print [indent , "bind ("]
+                ; newline ()
+                ; emitCmdBody (indent ^ "  ") selfRef higherRef subCmd
+                ; print [")"]
+                ; newline ()
+                ; print [indent , "(fn " , varName var , " =>"]
+                ; newline ()
+                ; emitRest ()
+                ; print [")"]
                 )
             | _ =>
                 let val code = parserCode selfRef higherRef parser
                 in
-                  print pp (String.concat [indent , "bind " , code , " (fn " , varName var , " =>"]);
-                  newline pp;
-                  emitRest ();
-                  print pp ")"
+                  print [indent , "bind " , code , " (fn " , varName var , " =>"]
+                  ; newline ()
+                  ; emitRest ()
+                  ; print [")"]
                 end
           end
 
@@ -253,10 +178,17 @@ structure Codegen :
                   | [v] => nodeOf v
                   | _ => String.concat ["(" , String.concatWith " , "
                       (List.map nodeOf args) , ")"]
-                val spanArgs = String.concat ["[ " , String.concatWith " , "
-                    (List.map (fn v => String.concat ["annot_add " , varName v]) allVars) , " ]"]
               in
-                print pp (String.concat [indent , "return_node " , nodeExpr , " " , spanArgs])
+                case allVars of
+                  nil =>
+                    print [indent , "empty " , nodeExpr]
+                | _ =>
+                    let
+                      val spanArgs = String.concat ["[ " , String.concatWith " , "
+                          (List.map (fn v => String.concat ["annot_add " , varName v]) allVars) , " ]"]
+                    in
+                      print [indent , "return_node " , nodeExpr , " " , spanArgs]
+                    end
               end
           | I.Bind { var , parser , andthen } =>
               emitBind indent selfRef higherRef var parser
@@ -264,263 +196,728 @@ structure Codegen :
 
         fun emitRuleParser indent defId selfRef higherRef ( { name , cmd } : I.rule ) =
           let
-            val conName = String.concat [ntPascal defId , name]
             fun findArgs cmd =
               case cmd of
                 I.Return { args , allVars = _ } => args
               | I.Bind { andthen , ... } => findArgs andthen
-            val args = findArgs cmd
+            val conName = String.concat [ntModule defId , name]
             val conExpr =
-              case args of
+              case findArgs cmd of
                 nil => String.concat ["(fn () => " , conName , ")"]
-              | [_] => conName
               | _ => conName
           in
-            print pp (String.concat [indent , "create " , conExpr , " ("]);
-            newline pp;
-            emitCmdBody (indent ^ "  ") selfRef higherRef cmd;
-            print pp ")"
+            print [indent , "create " , conExpr , " ("]
+            ; newline ()
+            ; emitCmdBody (indent ^ "  ") selfRef higherRef cmd
+            ; print [")"]
           end
 
         fun emitParser indent ( { name = defId , atoms , levels } : I.definition ) =
           let
             val inner = indent ^ "  "
             val body = inner ^ "  "
-            val selfRef = String.concat ["(deref parse" , ntPascal defId , "Dummy)"]
-
-            val precList = levels
+            val selfRef = String.concat ["(deref parse" , ntModule defId , "Dummy)"]
           in
-            print pp (String.concat [indent , "(* " , ntName defId , " *)"]);
-            newline pp;
-            print pp (String.concat [indent , "val parse" , ntPascal defId , " ="]);
-            newline pp;
-            print pp (String.concat [inner , "let"]);
-            newline pp;
+            print [indent , "(* " , ntName defId , " *)"]
+            ; newline ()
+            ; print [indent , "val parse" , ntModule defId , " ="]
+            ; newline ()
+            ; print [inner , "let"]
+            ; newline ()
 
-            print pp (String.concat [body , "val parseAtom = fix (fn parseAtom =>"]);
-            newline pp;
-            print pp (String.concat [body , "let"]);
-            newline pp;
+            ; print [body , "val parseAtom = fix (fn parseAtom =>"]
+            ; newline ()
+            ; print [body , "let"]
+            ; newline ()
 
-            List.appi
-              (fn ( i , rule as { name , ... } : I.rule ) =>
-                ( if i > 0 then newline pp else ()
-                ; print pp (String.concat [body , "  val parse" , name , " ="])
-                ; newline pp
-                ; emitRuleParser (body ^ "    ") defId selfRef selfRef rule
-                ; newline pp
-                ))
-              atoms;
+            ; List.appi
+                (fn ( i , rule as { name , ... } : I.rule ) =>
+                  ( if i > 0 then newline () else ()
+                  ; print [body , "  val parse" , name , " ="]
+                  ; newline ()
+                  ; emitRuleParser (body ^ "    ") defId selfRef selfRef rule
+                  ; newline ()
+                  ))
+                atoms
 
-            if List.null atoms then ()
-            else newline pp;
+            ; if List.null atoms then ()
+              else newline ()
 
-            print pp (String.concat [body , "in either"]);
-            newline pp;
-            List.appi
-              (fn ( i , { name , ... } : I.rule ) =>
-                let val prefix = if i = 0 then "[ " else ", "
-                in
-                  print pp (String.concat [body , prefix , "parse" , name]);
-                  newline pp
-                end)
-              atoms;
-            print pp (String.concat [body , "]"]);
-            newline pp;
-            print pp (String.concat [body , "end)"]);
-            newline pp;
-            newline pp;
+            ; print [body , "in either"]
+            ; newline ()
+            ; List.appi
+                (fn ( i , { name , ... } : I.rule ) =>
+                  let val prefix = if i = 0 then "[ " else ", "
+                  in
+                    print [body , prefix , "parse" , name]
+                    ; newline ()
+                  end)
+                atoms
+            ; print [body , "]"]
+            ; newline ()
+            ; print [body , "end)"]
+            ; newline ()
+            ; newline ()
 
-            List.appi
-              (fn ( i , { precedence , rules } : I.level ) =>
-                let
-                  val levelName = String.concat ["parseLevel" , Int.toString precedence]
-                  val higherName = if i = 0 then "(forget parseAtom)"
-                                   else let val { precedence = prevPrec , ... } : I.level = List.nth ( precList , i - 1 )
-                                        in String.concat ["(forget parseLevel" , Int.toString prevPrec , ")"]
-                                        end
-                in
-                  print pp (String.concat [body , "val " , levelName , " = fix (fn " , levelName , " =>"]);
-                  newline pp;
+            ; List.appi
+                (fn ( i , { precedence , rules } : I.level ) =>
+                  let
+                    val levelName = String.concat ["parseLevel" , Int.toString precedence]
+                    val higherName =
+                      if i = 0 then "(forget parseAtom)"
+                      else let val { precedence , ... } : I.level = List.nth ( levels , i - 1 )
+                           in String.concat ["(forget parseLevel" , Int.toString precedence , ")"]
+                           end
+                  in
+                    print [body , "val " , levelName , " = fix (fn " , levelName , " =>"]
+                    ; newline ()
 
-                  print pp (String.concat [body , "let"]);
-                  newline pp;
+                    ; print [body , "let"]
+                    ; newline ()
 
-                  List.app
-                    (fn rule as { name , ... } : I.rule =>
-                      ( print pp (String.concat [body , "  val parse" , name , " ="])
-                      ; newline pp
-                      ; emitRuleParser (body ^ "    ") defId levelName higherName rule
-                      ; newline pp
-                      ; newline pp
-                      ))
-                    rules;
+                    ; List.app
+                        (fn rule as { name , ... } : I.rule =>
+                          ( print [body , "  val parse" , name , " ="]
+                          ; newline ()
+                          ; emitRuleParser (body ^ "    ") defId levelName higherName rule
+                          ; newline ()
+                          ; newline ()
+                          ))
+                        rules
 
-                  print pp (String.concat [body , "in either"]);
-                  newline pp;
-                  print pp (String.concat [body , "[ " , higherName]);
-                  newline pp;
-                  List.app
-                    (fn { name , ... } : I.rule =>
-                      ( print pp (String.concat [body , ", parse" , name])
-                      ; newline pp
-                      ))
-                    rules;
-                  print pp (String.concat [body , "]"]);
-                  newline pp;
-                  print pp (String.concat [body , "end)"]);
-                  newline pp;
-                  newline pp
-                end)
-              precList;
+                    ; print [body , "in either"]
+                    ; newline ()
+                    ; print [body , "[ " , higherName]
+                    ; newline ()
+                    ; List.app
+                        (fn { name , ... } : I.rule =>
+                          ( print [body , ", parse" , name]
+                          ; newline ()
+                          ))
+                        rules
+                    ; print [body , "]"]
+                    ; newline ()
+                    ; print [body , "end)"]
+                    ; newline ()
+                    ; newline ()
+                  end)
+                levels
 
-            print pp (String.concat [inner , "in"]);
-            newline pp;
-            ( case precList of
-                nil => print pp (String.concat [body , "forget parseAtom"])
-              | _ =>
-                  let val { precedence = lastPrec , ... } : I.level = List.last precList
-                  in print pp (String.concat [body , "forget parseLevel" , Int.toString lastPrec])
-                  end
-            );
-            newline pp;
-            print pp (String.concat [inner , "end"]);
-            newline pp;
-            newline pp
+            ; print [inner , "in"]
+            ; newline ()
+            ; ( case levels of
+                  nil => print [body , "forget parseAtom"]
+                | _ =>
+                    let val { precedence , ... } : I.level = List.last levels
+                    in print [body , "forget parseLevel" , Int.toString precedence]
+                    end
+              )
+            ; newline ()
+            ; print [inner , "end"]
+            ; newline ()
+            ; newline ()
           end
 
-        fun emitBackpatch () =
-          List.app
+      in
+        openBox pp Vertical 0
+
+        (* AST signature *)
+        ; openBox pp Vertical 2
+        ; print ["signature " , sigName , " = sig"]
+        ; break ()
+        ; print ["type 'a annot = { node : 'a , span : Annot.span }"]
+        ; break ()
+        ; break ()
+        ; print ["(* terminals *)"]
+        ; break ()
+        ; List.app
+            (fn name =>
+              ( print ["type " , toSnakeCase name]
+              ; break ()
+              ))
+            terminalNames
+        ; break ()
+        ; print ["(* nonterminals *)"]
+        ; break ()
+        ; emitDatatypes ()
+        ; closeBox pp
+        ; break ()
+        ; print ["end"]
+        ; break ()
+
+        (* functor header *)
+        ; break ()
+        ; openBox pp Vertical 2
+        ; print ["functor " , toModuleCase name , "Parser ("]
+        ; break ()
+        ; print ["structure Stream : STREAM"]
+        ; break ()
+        ; print ["structure Trivial : " , terminalWhere]
+        ; break ()
+        ; openBox pp Vertical 2
+        ; print ["structure Terminals : sig"]
+        ; List.app
+            (fn name =>
+              ( break ()
+              ; print ["structure " , toModuleCase name , " : " , terminalWhere]
+              ))
+            terminalNames
+        ; closeBox pp
+        ; break ()
+        ; print ["end"]
+        ; closeBox pp
+        ; break ()
+        ; print [") :>"]
+        ; break ()
+
+        (* seal signature *)
+        ; openBox pp Vertical 2
+        ; print ["sig"]
+        ; break ()
+        ; print ["include " , sigName]
+        ; break ()
+        ; List.app
+            (fn name =>
+              ( print ["where type " , toSnakeCase name , " = Terminals." , toModuleCase name , ".t"]
+              ; break ()
+              ))
+            terminalNames
+        ; break ()
+        ; print ["type 'a parser"]
+        ; break ()
+        ; print ["type token_stream"]
+        ; break ()
+        ; print ["val lex : Char.char Stream.stream -> Annot.pos -> token_stream"]
+        ; break ()
+        ; List.app
             (fn { name , ... } : I.definition =>
-              ( print pp (String.concat
-                  ["val () = set parse" , ntPascal name , "Dummy parse" , ntPascal name])
-              ; break pp 0
+              ( print ["val parse" , ntModule name , " : " , ntSnake name , " parser"]
+              ; break ()
               ))
             definitions
+        ; print ["val parse : 'a parser -> token_stream -> ('a * token_stream) list"]
+        ; closeBox pp
+        ; break ()
+        ; print ["end ="]
 
-      in
-        openBox pp Vertical 0;
-          emitFunctorHeader ();
-          break pp 0;
-          emitSealSig ();
-          break pp 0;
-          print pp "struct";
-          break pp 0;
-          openBox pp Vertical 2;
-            break pp 0;
-            print pp "type 'a annot = { node : 'a , span : Annot.span }";
-            break pp 0;
-            break pp 0;
-            List.appi
-              (fn ( i , dt ) => emitDatatype (i = 0) dt)
-              datatypes;
-            List.appi
-              (fn ( i , { id , ... } : { id : I.id , rules : { name : string , ty : I.ty list } list } ) =>
-                emitWithtype (i = 0) id)
-              datatypes;
-            break pp 0;
-            ( case terminalNames of
+        (* struct body *)
+        ; break ()
+        ; print ["struct"]
+        ; break ()
+        ; openBox pp Vertical 2
+          ; break ()
+          ; print ["type 'a annot = { node : 'a , span : Annot.span }"]
+          ; break ()
+          ; List.app
+              (fn name =>
+                ( print ["type " , toSnakeCase name , " = Terminals." , toModuleCase name , ".t"]
+                ; break ()
+                ))
+              terminalNames
+          ; break ()
+          ; emitDatatypes ()
+          ; break ()
+          ; ( case terminalNames of
                 nil => ()
               | first :: rest =>
-                  ( print pp (String.concat
-                      ["datatype terminal_token = Terminal" , toPascalCase first , " of Terminals." , toPascalCase first , ".t"])
+                  ( print 
+                    [ "datatype terminal_token = Terminal" 
+                    , toModuleCase first , " of Terminals." 
+                    , toModuleCase first , ".t"]
                   ; List.app
                       (fn name =>
-                        ( break pp 0
-                        ; print pp (String.concat
-                            ["| Terminal" , toPascalCase name , " of Terminals." , toPascalCase name , ".t"])
+                        ( break ()
+                        ; print 
+                          [ "| Terminal" 
+                          , toModuleCase name 
+                          , " of Terminals." 
+                          , toModuleCase name , ".t"]
                         ))
                       rest
-                  ; break pp 0
+                  ; break ()
                   )
-            );
-            break pp 0;
-            openBox pp Vertical 2;
-            print pp (String.concat ["structure Internal = ParseInternal ("]);
-            break pp 0;
-            print pp "val table_size = table_size";
-            break pp 0;
-            print pp "structure Stream = Stream";
-            break pp 0;
-            print pp "structure Trivial = Trivial";
-            break pp 0;
-            print pp "type terminal = terminal_token";
-            break pp 0;
-            print pp "val keywords =";
-            break pp 0;
-            ( case keywordList of
-                nil => print pp "  []"
-              | ( ( firstId , firstStr ) :: rest ) =>
-                  ( print pp (String.concat
-                      ["  [ (\"" , String.toString firstStr , "\" , " , Int.toString firstId , ")"])
-                  ; List.app
-                      (fn ( id , s ) =>
-                        ( break pp 0
-                        ; print pp (String.concat
-                            ["  , (\"" , String.toString s , "\" , " , Int.toString id , ")"])
-                        ))
-                      rest
-                  ; break pp 0
-                  ; print pp "  ]"
-                  )
-            );
-            closeBox pp;
-            break pp 0;
-            print pp ")";
-            break pp 0;
-            print pp "open Internal";
-            break pp 0;
-            break pp 0;
-            List.app
-              (fn name =>
-                let
-                  val terminalName = toPascalCase name
-                  val proj =
-                    if List.length terminalNames = 1
-                    then String.concat ["(fn Terminal" , terminalName , " v => SOME v)"]
-                    else String.concat ["(fn Terminal" , terminalName , " v => SOME v | _ => NONE)"]
-                in
-                  print pp (String.concat
-                    ["val parseTerminal" , terminalName , " = parseTerminal " , proj]);
-                  break pp 0
-                end)
-              terminalNames;
-            emitBackpatchRefs ();
-            break pp 0;
-            ( case terminalNames of
-                nil =>
-                  print pp "val lex = lex []"
+            )
+          ; break ()
+          ; openBox pp Vertical 2
+          ; print ["structure Internal = ParseInternal ("]
+          ; break ()
+          ; print ["structure Stream = Stream"]
+          ; break ()
+          ; print ["structure Trivial = Trivial"]
+          ; break ()
+          ; openBox pp Vertical 2
+          ; print ["structure Terminal = struct"]
+          ; break ()
+          ; print ["type t = terminal_token"]
+          ; break ()
+          ; print ["type 'a stream = 'a Stream.stream"]
+          ; break ()
+          ; print ["val lex ="]
+          ; break ()
+          ; ( case terminalNames of
+                nil => print ["  []"]
               | _ =>
-                  ( print pp "val lex = lex"
-                  ; break pp 0
-                  ; List.appi
+                  ( List.appi
                       (fn ( i , name ) =>
                         let
-                          val terminalName = toPascalCase name
+                          val name = toModuleCase name
                           val prefix = if i = 0 then "  [ " else "  , "
                         in
-                          print pp (String.concat
-                            [prefix , "addLexer Terminals." , terminalName , ".lex Terminal" , terminalName]);
-                          break pp 0
+                          print [prefix , "(fn (s , p) =>"]
+                          ; break ()
+                          ; print ["      case Terminals." , name , ".lex (s , p) of"]
+                          ; break ()
+                          ; print ["        SOME (v , s' , p') => SOME (Terminal" , name , " v , s' , p')"]
+                          ; break ()
+                          ; print ["      | NONE => NONE)"]
+                          ; break ()
                         end)
                       terminalNames
-                  ; print pp "  ]"
+                  ; print ["  ]"]
                   )
-            );
-            break pp 0;
-            break pp 0;
-            List.app (emitParser "  ") definitions;
-            break pp 0;
-            emitBackpatch ();
-            break pp 0;
-            print pp "val parse = parser";
-          closeBox pp;
-          break pp 0;
-          break pp 0;
-          print pp "end";
-        closeBox pp;
-        flush pp;
-        TextIO.closeOut out
+            )
+          ; closeBox pp
+          ; break ()
+          ; print ["end"]
+          ; break ()
+          ; print ["val keywords ="]
+          ; break ()
+          ; ( case IM.toList keywords of
+                nil => print ["  []"]
+              | ( ( firstId , firstStr ) :: rest ) =>
+                  ( print ["  [ (\"" , String.toString firstStr , "\" , " , Int.toString firstId , ")"]
+                  ; List.app
+                      (fn ( id , s ) =>
+                        ( break ()
+                        ; print ["  , (\"" , String.toString s , "\" , " , Int.toString id , ")"]
+                        ))
+                      rest
+                  ; break ()
+                  ; print ["  ]"]
+                  )
+            )
+          ; closeBox pp
+          ; break ()
+          ; print [")"]
+          ; break ()
+          ; print ["open Internal"]
+          ; break ()
+          ; break ()
+          ; List.app
+              (fn name =>
+                let
+                  val name = toModuleCase name
+                  val proj =
+                    if List.length terminalNames = 1
+                    then String.concat ["(fn Terminal" , name , " v => SOME v)"]
+                    else String.concat ["(fn Terminal" , name , " v => SOME v | _ => NONE)"]
+                in
+                  print ["val parseTerminal" , name , " = parseTerminal " , proj]
+                  ; break ()
+                end)
+              terminalNames
+          ; List.app
+              (fn { name , ... } : I.definition =>
+                ( print ["  val parse" , ntModule name , "Dummy : " , ntSnake name , " t_dummy = dummy ()"]
+                ; break ()
+                ))
+              definitions
+          ; break ()
+          ; print ["val lex = lex"]
+          ; break ()
+          ; break ()
+          ; List.app (emitParser "  ") definitions
+          ; break ()
+          ; List.app
+              (fn { name , ... } : I.definition =>
+                ( print ["val () = set parse" , ntModule name , "Dummy parse" , ntModule name]
+                ; break ()
+                ))
+              definitions
+          ; break ()
+          ; print ["val parse = parser"]
+        ; closeBox pp
+        ; break ()
+        ; break ()
+        ; print ["end"]
+
+        (* print functor *)
+        ; break ()
+        ; break ()
+        ; openBox pp Vertical 2
+        ; print ["functor " , toModuleCase name , "Print ("]
+        ; break ()
+        ; print ["structure Ast : " , sigName]
+        ; break ()
+        ; openBox pp Vertical 2
+        ; print ["structure Terminals : sig"]
+        ; List.app
+            (fn name =>
+              ( break ()
+              ; print ["structure " , toModuleCase name , " : PRINT_TERMINAL where type t = Ast." , toSnakeCase name]
+              ))
+            terminalNames
+        ; closeBox pp
+        ; break ()
+        ; print ["end"]
+        ; closeBox pp
+        ; break ()
+        ; print [") :>"]
+        ; break ()
+        ; openBox pp Vertical 2
+        ; print ["sig"]
+        ; break ()
+        ; List.app
+            (fn name =>
+              ( print ["val print" , toModuleCase name , " : Ast." , toSnakeCase name , " Ast.annot -> string"]
+              ; break ()
+              ))
+            terminalNames
+        ; List.app
+            (fn { id , ... } : { id : I.id , rules : { name : string , ty : I.ty list } list } =>
+              ( print ["val print" , ntModule id , " : Ast." , ntSnake id , " -> string"]
+              ; break ()
+              ))
+            datatypes
+        ; List.app
+            (fn name =>
+              ( print ["val prettyPrint" , toModuleCase name , " : Ast." , toSnakeCase name , " Ast.annot -> string"]
+              ; break ()
+              ))
+            terminalNames
+        ; List.app
+            (fn { name , ... } : I.definition =>
+              ( print ["val prettyPrint" , ntModule name , " : Ast." , ntSnake name , " -> string"]
+              ; break ()
+              ))
+            definitions
+        ; closeBox pp
+        ; break ()
+        ; print ["end = struct"]
+        ; break ()
+        ; openBox pp Vertical 2
+          ; break ()
+          ; print ["open Ast"]
+          ; break ()
+          ; break ()
+          ; print ["val push = PrintBuffer.push"]
+          ; break ()
+          ; break ()
+          ; let
+              fun printCallForTy v ty =
+                case ty of
+                  I.TyTerminal tid =>
+                    String.concat ["print" , tModule tid , " buf " , v]
+                | I.TyNonterminal nid =>
+                    String.concat ["print" , ntModule nid , " buf " , v]
+                | I.TyList innerTy =>
+                    let val inner = v ^ "e"
+                    in String.concat
+                      [ "( push buf \"[\" lineno"
+                      , " ; List.appi (fn ( i , " , inner , " ) => "
+                      , "( if i > 0 then push buf \" , \" lineno else ()"
+                      , " ; " , printCallForTy inner innerTy
+                      , " )) " , v
+                      , " ; push buf \"]\" lineno )"
+                      ]
+                    end
+                | I.TyOption innerTy =>
+                    let val inner = v ^ "v"
+                    in String.concat
+                      [ "(case " , v , " of NONE => push buf \"_\" lineno"
+                      , " | SOME " , inner , " => " , printCallForTy inner innerTy
+                      , ")"
+                      ]
+                    end
+                | I.TyTuple tys =>
+                    let
+                      val vars = List.mapi (fn ( i , _ ) => v ^ Int.toString i) tys
+                      val prints = ListPair.map (fn ( vi , ty ) => printCallForTy vi ty) (vars , tys)
+                    in
+                      case prints of
+                        nil => String.concat ["let val () = " , v , " in () end"]
+                      | first :: rest =>
+                          String.concat
+                          [ "let val (" , String.concatWith " , " vars , ") = " , v
+                          , " in push buf \"(\" lineno"
+                          , " ; " , first
+                          , String.concat (List.map (fn p => " ; push buf \" , \" lineno ; " ^ p) rest)
+                          , " ; push buf \")\" lineno end"
+                          ]
+                    end
+
+            in
+              List.app
+                (fn name =>
+                  ( openBox pp Vertical 2
+                  ; print ["fun print" , toModuleCase name , " buf"]
+                  ; break ()
+                  ; print ["( { node , span = { start = { lineno , ... } , ... } } : " , toSnakeCase name , " annot ) ="]
+                  ; break ()
+                  ; print ["push buf (Terminals." , toModuleCase name , ".show node) lineno"]
+                  ; closeBox pp
+                  ; break ()
+                  ; break ()
+                  ))
+                terminalNames
+              ; List.appi
+                  (fn ( i , { id , rules } ) =>
+                    let
+                      val keyword = if i = 0 then "fun" else "and"
+                      val defName = ntName id
+                    in
+                      openBox pp Vertical 2
+                      ; print [keyword , " print" , ntModule id , " buf"]
+                      ; break ()
+                      ; print ["( { node , span = { start = { lineno , ... } , ... } } : " , ntSnake id , " ) ="]
+                      ; break ()
+                      ; openBox pp Vertical 2
+                      ; print ["case node of"]
+                      ; break ()
+                      ; List.appi
+                          (fn ( j , { name , ty } : { name : string , ty : I.ty list } ) =>
+                            let
+                              val conName = toModuleCase defName ^ name
+                              val vars = List.mapi (fn ( i , _ ) => String.concat ["v" , Int.toString i]) ty
+                              val pat =
+                                case vars of
+                                  nil => conName
+                                | [v] => String.concat [conName , " " , v]
+                                | _ => String.concat [conName , " (" , String.concatWith " , " vars , ")"]
+                            in
+                              if j > 0 then ( break () ; print ["| "] ) else print ["  "]
+                              ; openBox pp Vertical 2
+                              ; print [pat , " =>"]
+                              ; break ()
+                              ; print ["( push buf \"" , conName , "\" lineno"]
+                              ; ( case ty of
+                                    nil => ()
+                                  | _ =>
+                                      ( break ()
+                                      ; print ["; push buf \"(\" lineno"]
+                                      ; List.appi
+                                          (fn ( i , ( v , t ) ) =>
+                                            ( if i > 0
+                                              then ( break ()
+                                                   ; print ["; push buf \" , \" lineno"]
+                                                   )
+                                              else ()
+                                            ; break ()
+                                            ; print ["; " , printCallForTy v t]
+                                            ))
+                                          (ListPair.zip (vars , ty))
+                                      ; break ()
+                                      ; print ["; push buf \")\" lineno"]
+                                      )
+                                )
+                              ; break ()
+                              ; print [")"]
+                              ; closeBox pp
+                            end)
+                          rules
+                      ; closeBox pp
+                      ; closeBox pp
+                      ; break ()
+                      ; break ()
+                    end)
+                  datatypes
+              ; break ()
+              ; print ["fun print f = fn v =>"]
+              ; break ()
+              ; print ["let val buf = PrintBuffer.empty ()"]
+              ; break ()
+              ; print ["in f buf v"]
+              ; break ()
+              ; print ["; PrintBuffer.toString buf"]
+              ; break ()
+              ; print ["end"]
+              ; break ()
+              ; List.app
+                  (fn name =>
+                    ( print ["val print" , toModuleCase name , " = print print" , toModuleCase name]
+                    ; break ()
+                    ))
+                  terminalNames
+              ; List.app
+                  (fn { id , ... } : { id : I.id , rules : { name : string , ty : I.ty list } list } =>
+                    ( print ["val print" , ntModule id , " = print print" , ntModule id]
+                    ; break ()
+                    ))
+                  datatypes
+              ; break ()
+              ; break ()
+              ; let
+                  fun findArgs cmd =
+                    case cmd of
+                      I.Return { args , allVars = _ } => args
+                    | I.Bind { andthen , ... } => findArgs andthen
+
+                  fun subCmdPat subCmd =
+                    case findArgs subCmd of
+                      nil => "_"
+                    | [a] => varName a
+                    | args => String.concat ["(" , String.concatWith " , " (List.map varName args) , ")"]
+
+                  fun emitPrettyPrintCmd isFirst allArgs cmd =
+                    case cmd of
+                      I.Return _ => ()
+                    | I.Bind { var , parser , andthen } =>
+                        case parser of
+                          I.Keyword _ =>
+                            ( if isFirst then () else ( break () ; print ["; "] )
+                            ; emitPrettyPrintBind var allArgs parser
+                            ; emitPrettyPrintCmd false allArgs andthen
+                            )
+                        | _ =>
+                            if List.exists (fn a => a = var) allArgs
+                            then
+                              ( if isFirst then () else ( break () ; print ["; "] )
+                              ; emitPrettyPrintBind var allArgs parser
+                              ; emitPrettyPrintCmd false allArgs andthen
+                              )
+                            else emitPrettyPrintCmd isFirst allArgs andthen
+
+                  and emitPrettyPrintBind var allArgs parser =
+                    let val v = varName var
+                    in
+                      case parser of
+                        I.Keyword kid =>
+                          print ["push buf \"" , String.toString (nameOfId keywords kid) , "\" lineno"]
+                      | I.Terminal tid =>
+                          print ["prettyPrint" , tModule tid , " buf " , v]
+                      | I.Ref I.Self =>
+                          print ["prettyPrintSelf buf " , v]
+                      | I.Ref I.Higher =>
+                          print ["prettyPrintSelf buf " , v]
+                      | I.Ref (I.Other nid) =>
+                          print ["prettyPrint" , ntModule nid , " buf " , v]
+                      | I.Star subCmd =>
+                          ( openBox pp Vertical 2
+                          ; print ["List.app (fn " , subCmdPat subCmd , " =>"]
+                          ; break ()
+                          ; print ["( "]
+                          ; emitPrettyPrintCmd true (findArgs subCmd) subCmd
+                          ; print ["))"]
+                          ; closeBox pp
+                          ; print [" " , v]
+                          )
+                      | I.Plus subCmd =>
+                          ( openBox pp Vertical 2
+                          ; print ["List.app (fn " , subCmdPat subCmd , " =>"]
+                          ; break ()
+                          ; print ["( "]
+                          ; emitPrettyPrintCmd true (findArgs subCmd) subCmd
+                          ; print ["))"]
+                          ; closeBox pp
+                          ; print [" " , v]
+                          )
+                      | I.Opt subCmd =>
+                          ( openBox pp Vertical 2
+                          ; print ["(case " , v , " of NONE => ()"]
+                          ; break ()
+                          ; print ["| SOME " , subCmdPat subCmd , " =>"]
+                          ; break ()
+                          ; print ["( "]
+                          ; emitPrettyPrintCmd true (findArgs subCmd) subCmd
+                          ; print ["))"]
+                          ; closeBox pp
+                          )
+                      | I.Seq subCmd =>
+                          ( openBox pp Vertical 2
+                          ; print ["let val " , subCmdPat subCmd , " = " , v]
+                          ; break ()
+                          ; print ["in "]
+                          ; emitPrettyPrintCmd true (findArgs subCmd) subCmd
+                          ; break ()
+                          ; print ["end"]
+                          ; closeBox pp
+                          )
+                    end
+                in
+                  List.app
+                    (fn name =>
+                      ( openBox pp Vertical 2
+                      ; print ["fun prettyPrint" , toModuleCase name , " buf"]
+                      ; break ()
+                      ; print ["( { node , span = { start = { lineno , ... } , ... } } : " , toSnakeCase name , " annot ) ="]
+                      ; break ()
+                      ; print ["push buf (Terminals." , toModuleCase name , ".show node) lineno"]
+                      ; closeBox pp
+                      ; break ()
+                      ; break ()
+                      ))
+                    terminalNames
+                  ; List.appi
+                      (fn ( i , { name = defId , atoms , levels } : I.definition ) =>
+                        let
+                          val keyword = if i = 0 then "fun" else "and"
+                          val allRules =
+                            atoms @ List.concatMap (fn { rules , ... } : I.level => rules) levels
+                        in
+                          openBox pp Vertical 2
+                          ; print [keyword , " prettyPrint" , ntModule defId , " buf"]
+                          ; break ()
+                          ; print ["( { node , span = { start = { lineno , ... } , ... } } : " , ntSnake defId , " ) ="]
+                          ; break ()
+                          ; print ["let val prettyPrintSelf = prettyPrint" , ntModule defId]
+                          ; break ()
+                          ; print ["in"]
+                          ; break ()
+                          ; openBox pp Vertical 2
+                          ; print ["case node of"]
+                          ; break ()
+                          ; List.appi
+                              (fn ( j , { name , cmd } : I.rule ) =>
+                                let
+                                  val conName = String.concat [ntModule defId , name]
+                                  val args = findArgs cmd
+                                  val patVars = List.map varName args
+                                  val pat =
+                                    case patVars of
+                                      nil => conName
+                                    | [v] => String.concat [conName , " " , v]
+                                    | _ => String.concat [conName , " (" , String.concatWith " , " patVars , ")"]
+                                in
+                                  if j > 0 then ( break () ; print ["| "] ) else print ["  "]
+                                  ; openBox pp Vertical 2
+                                  ; print [pat , " =>"]
+                                  ; break ()
+                                  ; print ["( "]
+                                  ; emitPrettyPrintCmd true args cmd
+                                  ; print [")"]
+                                  ; closeBox pp
+                                end)
+                              allRules
+                          ; closeBox pp
+                          ; break ()
+                          ; print ["end"]
+                          ; closeBox pp
+                          ; break ()
+                          ; break ()
+                        end)
+                      definitions
+                  ; break ()
+                  ; List.app
+                      (fn name =>
+                        ( print ["val prettyPrint" , toModuleCase name , " = print prettyPrint" , toModuleCase name]
+                        ; break ()
+                        ))
+                      terminalNames
+                  ; List.app
+                      (fn { name , ... } : I.definition =>
+                        ( print ["val prettyPrint" , ntModule name , " = print prettyPrint" , ntModule name]
+                        ; break ()
+                        ))
+                      definitions
+                end
+            end
+        ; closeBox pp
+        ; break ()
+        ; print ["end"]
+
+        ; closeBox pp
+        ; flush pp
+        ; TextIO.closeOut out
       end
 
   end

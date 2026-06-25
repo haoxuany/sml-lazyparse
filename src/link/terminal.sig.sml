@@ -6,9 +6,9 @@ sig
   val lex : (char stream * Annot.pos) -> (t * char stream * Annot.pos) option
 end
 
-signature TERMINAL_PRINTABLE =
+signature PRINT_TERMINAL =
 sig
-  include TERMINAL
-  
+  type t
+
   val show : t -> string
 end

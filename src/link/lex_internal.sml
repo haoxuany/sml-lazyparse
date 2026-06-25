@@ -6,43 +6,97 @@ signature STREAM = sig
   val lazy : (unit -> 'a front) -> 'a stream
 end
 
+functor TaggedStream (
+  structure Stream : STREAM
+  structure AnnotState : sig
+    type token
+    type t
+    type 'a stream
+
+    val next : t -> ( token * (token stream) ) -> t
+    val pos : t -> Annot.pos
+  end
+    where type 'a stream = 'a Stream.stream
+) = struct
+  type stream = AnnotState.token Stream.stream * AnnotState.t
+
+  datatype front = Nil | Cons of AnnotState.token * stream
+
+  fun front ( (s , state) : stream ) : front =
+    case Stream.front s of
+      Stream.Nil => Nil
+    | Stream.Cons ( v , tail ) =>
+        Cons ( v , ( tail , AnnotState.next state ( v , tail ) ) )
+
+  fun pos ( ( _ , state ) : stream) : Annot.pos =
+    AnnotState.pos state
+
+  fun fromStream s state = ( s , state )
+
+end
+
 functor LexInternal (
   structure Stream : STREAM
+  structure Keyword : sig
+    type t
+
+    val keywords : (string * t) list
+  end
+  structure Trivial : TERMINAL
+    where type 'a stream = 'a Stream.stream
+  structure Terminal : sig
+    type t
+    type 'a stream
+
+    val lex : ((char stream * Annot.pos) -> (t * char stream * Annot.pos)
+    option) list
+  end
+    where type 'a stream = 'a Stream.stream
 ) = struct
 
-  structure TaggedStream = struct
-    type stream = char Stream.stream * Annot.pos
+  structure LexStream = TaggedStream (
+    structure Stream = Stream
+    structure AnnotState = struct
+      type token = char
+      type t = Annot.pos
+      type 'a stream = 'a Stream.stream
 
-    datatype front = Nil | Cons of char * stream
+      fun next pos (#"\r" , s) =
+            ( case Stream.front s of
+                Stream.Cons ( #"\n" , _ ) => Annot.sameline 1 pos
+              | _ => Annot.newline 1 pos )
+        | next pos (#"\n" , _) = Annot.newline 1 pos
+        | next pos (_, _) = Annot.sameline 1 pos
 
-    fun front (( s , pos ) : stream ) : front * Annot.pos =
-      case Stream.front s of
-        Stream.Nil => ( Nil , pos )
-      | Stream.Cons ( #"\r" , s' ) =>
-          (* peek ahead for \r\n *)
-          ( case Stream.front s' of
-              Stream.Cons ( #"\n" , _ ) =>
-                (* \r\n: \r stays on same line, \n will bump *)
-                ( Cons ( #"\r" , ( s' , Annot.sameline 1 pos ) ) , pos )
-            | _ =>
-                (* lone \r is a newline *)
-                ( Cons ( #"\r" , ( s' , Annot.newline 1 pos ) ) , pos )
-          )
-      | Stream.Cons ( #"\n" , s' ) =>
-          ( Cons ( #"\n" , ( s' , Annot.newline 1 pos ) ) , pos )
-      | Stream.Cons ( c , s' ) =>
-          ( Cons ( c , ( s' , Annot.sameline 1 pos ) ) , pos )
+      fun pos p = p
+    end
+  )
 
-    fun fromStream (s : char Stream.stream) (a : Annot.pos) : stream =
-      ( s , a )
-  end
+  structure LS = LexStream
 
-  datatype ('a , 'b , 'c) token =
-    TokenKeyword of 'a * Annot.span
-  | TokenTrivial of 'b * Annot.span
-  | TokenOther of 'c * Annot.span
+  datatype token =
+    TokenKeyword of Keyword.t * Annot.span
+  | TokenTrivial of Trivial.t * Annot.span
+  | TokenOther of Terminal.t * Annot.span
 
-  
+  structure TokenStream = TaggedStream (
+    structure Stream = Stream
+    structure AnnotState = struct
+      type token = token
+      type t = Annot.pos
+      type 'a stream = 'a Stream.stream
+
+      fun spanOf (TokenKeyword ( _ , sp )) = sp
+        | spanOf (TokenTrivial ( _ , sp )) = sp
+        | spanOf (TokenOther ( _ , sp )) = sp
+
+      fun next _ ( tok , _ ) = #finish (spanOf tok)
+
+      fun pos p = p
+    end
+  )
+
+
   exception LexError of char * Annot.pos
 
   structure Trie = struct
@@ -73,28 +127,21 @@ functor LexInternal (
       List.foldl (fn ((s , x) , t) => insert t s x) empty keywords
   end
 
-  structure TS = TaggedStream
-
   fun lex (s : char Stream.stream)
     (start : Annot.pos)
-    (keywords : (string * 'a) list)
-    (lexTrivial :
-      (char Stream.stream * Annot.pos) ->
-      ('b * char Stream.stream * Annot.pos) option
-    )
-    (others :
-      ((char Stream.stream * Annot.pos) ->
-       ('c * char Stream.stream * Annot.pos) option
-      ) list
-    ) : ('a , 'b , 'c) token Stream.stream =
+    : token Stream.stream =
     let
-      val ts = TS.fromStream s start
+      val keywords = Keyword.keywords
+      val lexTrivial = Trivial.lex
+      val others = Terminal.lex
+
+      val ts = LS.fromStream s start
       val trie = Trie.build keywords
 
       (* walk the trie against the tagged stream, keeping the
        * longest match seen so far *)
-      fun tryKeywords (ts : TS.stream)
-        : ('a * TS.stream) option =
+      fun tryKeywords (ts : LS.stream)
+        : (Keyword.t * LS.stream) option =
         let
           fun go (Trie.Trie (v , children) , ts , best) =
             let
@@ -105,9 +152,9 @@ functor LexInternal (
             in
               if Trie.CharMap.isEmpty children then best
               else
-                case TS.front ts of
-                  ( TS.Nil , _ ) => best
-                | ( TS.Cons ( c , ts' ) , _ ) =>
+                case LS.front ts of
+                  LS.Nil => best
+                | LS.Cons ( c , ts' ) =>
                     case Trie.CharMap.find children c of
                       NONE => best
                     | SOME child => go (child , ts' , best)
@@ -117,14 +164,14 @@ functor LexInternal (
         end
 
       (* try the trivial lexer *)
-      fun tryTrivial (ts : TS.stream)
-        : ('b * TS.stream) option =
+      fun tryTrivial (ts : LS.stream)
+        : (Trivial.t * LS.stream) option =
         case lexTrivial ts of
           NONE => NONE
         | SOME (v , s , pos) => SOME (v , (s , pos))
 
-      fun tryOthers (ts : TS.stream)
-        : ('c * TS.stream) option =
+      fun tryOthers (ts : LS.stream)
+        : (Terminal.t * LS.stream) option =
         List.foldl
           (fn (lexer , best) =>
             case lexer ts of
@@ -142,29 +189,35 @@ functor LexInternal (
           NONE others
 
       (* main lexing loop, produces a token stream *)
-      fun go (ts : TS.stream) : ('a , 'b , 'c) token Stream.front =
-        let val ( _ , pos ) = ts
+      fun go (ts : LS.stream) : token Stream.front =
+        let val pos = LS.pos ts
         in
-          case TS.front ts of
-            ( TS.Nil , _ ) => Stream.Nil
-          | ( TS.Cons ( c , _ ) , _ ) =>
+          case LS.front ts of
+            LS.Nil => Stream.Nil
+          | LS.Cons ( c , _ ) =>
               let
                 val keyword =
                   case tryKeywords ts of
-                    SOME (v , ts' as ( _ , endpos )) =>
-                      SOME (TokenKeyword (v , Annot.span pos endpos) , endpos , ts')
+                    SOME (v , ts') =>
+                      let val endpos = LS.pos ts'
+                      in SOME (TokenKeyword (v , Annot.span pos endpos) , endpos , ts')
+                      end
                   | NONE => NONE
 
                 val trivial =
                   case tryTrivial ts of
-                    SOME (v , ts' as ( _ , endpos )) =>
-                      SOME (TokenTrivial (v , Annot.span pos endpos) , endpos , ts')
+                    SOME (v , ts') =>
+                      let val endpos = LS.pos ts'
+                      in SOME (TokenTrivial (v , Annot.span pos endpos) , endpos , ts')
+                      end
                   | NONE => NONE
 
                 val other =
                   case tryOthers ts of
-                    SOME (v , ts' as ( _ , endpos )) =>
-                      SOME (TokenOther (v , Annot.span pos endpos) , endpos , ts')
+                    SOME (v , ts') =>
+                      let val endpos = LS.pos ts'
+                      in SOME (TokenOther (v , Annot.span pos endpos) , endpos , ts')
+                      end
                   | NONE => NONE
 
                 val candidates =

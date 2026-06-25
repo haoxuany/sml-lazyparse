@@ -14,14 +14,9 @@ structure Main = struct
     case OS.Path.splitBaseExt filename of
       { base , ext = _ } => OS.Path.file base
 
-  fun stripSmlExtension filename =
-    case OS.Path.splitBaseExt filename of
-      { base , ext = SOME "sml" } => base
-    | _ => filename
-
   fun run (filename , output) =
     let
-      val name = stripSmlExtension output
+      val { dir , file = name } = OS.Path.splitDirFile output
       val ins = TextIO.openIn filename
         handle IO.Io { cause , ... } =>
           die (String.concat ["cannot open file '" , filename , "': " , exnMessage cause])
@@ -31,7 +26,7 @@ structure Main = struct
         handle Parse.LexError msg => die msg
       val _ = TextIO.closeIn ins
     in
-      Codegen.codegen name (Compile.compile (Elaboration.elaborate result))
+      Codegen.codegen { dir = dir , name = name } (Compile.compile (Elaboration.elaborate result))
         handle Elaboration.UnboundNonterminal s =>
           die (String.concat ["unbound nonterminal '" , s , "'"])
         | Elaboration.MissingRuleName =>
@@ -40,7 +35,7 @@ structure Main = struct
           die (String.concat ["duplicate property '" , s , "'"])
         | Elaboration.InvalidAssociativity s =>
           die s
-      ; print (String.concat ["wrote " , name , ".sml\n"])
+      ; print (String.concat ["wrote " , output , ".sml\n"])
     end
 
   fun main () =

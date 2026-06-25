@@ -1,0 +1,13 @@
+Value ::= 'string' [ name String ]
+        | 'number' [ name Number ]
+        | Object [ name Object ]
+        | Array [ name Array ]
+        | "true" [ name True ]
+        | "false" [ name False ]
+        | "null" [ name Null ]
+
+Object ::= "{" (Member ("," Member)*)? "}" [ name Object ]
+
+Member ::= 'string' ":" Value [ name Member ]
+
+Array ::= "[" (Value ("," Value)*)? "]" [ name Array ]

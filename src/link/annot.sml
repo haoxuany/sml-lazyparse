@@ -1,5 +1,26 @@
 
-structure Annot = struct
+structure Annot : sig 
+
+  type pos =
+    { pos : int (* byte position *)
+    , lineno : int (* 1-indexed *)
+    , colno : int (* 1-indexed *)
+    }
+
+  type span =
+    { start : pos
+    , finish : pos
+    }
+
+  val empty : pos
+  val newline : int (* bytes *) -> pos -> pos
+  val sameline : int (* bytes *) -> pos -> pos
+  val span : pos -> pos -> span
+  val join : span -> span -> span
+  val length : span -> int
+  val compare : pos * pos -> order
+
+end = struct
   
   type pos =
     { pos : int (* byte position *)

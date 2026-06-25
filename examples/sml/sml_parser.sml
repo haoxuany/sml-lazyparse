@@ -81,8 +81,157 @@ structure SmlParser = struct
           | _ => NONE
         )
 
-  structure Sml = Sml (
-    val table_size = 1024
+  structure Terminals = struct
+    (* Integer literal *)
+    structure Int = struct
+      type t = string
+      type 'a stream = 'a stream
+      fun lex (s , pos) =
+        case front s of
+          Cons (#"~" , s') =>
+            let val (digits , s'' , pos') = takeWhile C.isDigit (s' , Annot.sameline 1 pos)
+            in if S.size digits > 0
+               then SOME ("~" ^ digits , s'' , pos')
+               else NONE
+            end
+        | Cons (c , _) =>
+            if C.isDigit c
+            then let val (digits , s' , pos') = takeWhile C.isDigit (s , pos)
+                 in SOME (digits , s' , pos')
+                 end
+            else NONE
+        | Nil => NONE
+      val show = fn s => s
+    end
+
+    (* Word literal *)
+    structure Word = struct
+      type t = string
+      type 'a stream = 'a stream
+      fun lex (s , pos) =
+        case front s of
+          Cons (#"0" , s') =>
+            ( case front s' of
+                Cons (#"w" , s'') =>
+                  let val (digits , s''' , pos') = takeWhile C.isDigit (s'' , Annot.sameline 2 pos)
+                  in if S.size digits > 0
+                     then SOME ("0w" ^ digits , s''' , pos')
+                     else NONE
+                  end
+              | _ => NONE
+            )
+        | _ => NONE
+      val show = fn s => s
+    end
+
+    (* Float literal *)
+    structure Float = struct
+      type t = string
+      type 'a stream = 'a stream
+      fun lex (s , pos) =
+        case front s of
+          Cons (#"~" , _) =>
+            let val (whole , s' , pos') = takeWhile (fn c => c = #"~" orelse C.isDigit c) (s , pos)
+            in
+              case front s' of
+                Cons (#"." , s'') =>
+                  let val (frac , s''' , pos'') = takeWhile C.isDigit (s'' , Annot.sameline 1 pos')
+                  in if S.size frac > 0
+                     then SOME (whole ^ "." ^ frac , s''' , pos'')
+                     else NONE
+                  end
+              | _ => NONE
+            end
+        | Cons (c , _) =>
+            if C.isDigit c
+            then
+              let val (whole , s' , pos') = takeWhile C.isDigit (s , pos)
+              in
+                case front s' of
+                  Cons (#"." , s'') =>
+                    let val (frac , s''' , pos'') = takeWhile C.isDigit (s'' , Annot.sameline 1 pos')
+                    in if S.size frac > 0
+                       then SOME (whole ^ "." ^ frac , s''' , pos'')
+                       else NONE
+                    end
+                | _ => NONE
+              end
+            else NONE
+        | Nil => NONE
+      val show = fn s => s
+    end
+
+    (* Char literal: #"c" *)
+    structure Char = struct
+      type t = string
+      type 'a stream = 'a stream
+      fun lex (s , pos) =
+        case front s of
+          Cons (#"#" , s') =>
+            ( case front s' of
+                Cons (#"\"" , s'') =>
+                  ( case lexCharBody (s'' , Annot.sameline 2 pos) of
+                      SOME (c , s''' , pos') => SOME (c , s''' , pos')
+                    | NONE => NONE
+                  )
+              | _ => NONE
+            )
+        | _ => NONE
+      val show = fn c => S.concat ["#\"" , c , "\""]
+    end
+
+    (* String literal *)
+    structure String = struct
+      type t = string
+      type 'a stream = 'a stream
+      fun lex (s , pos) =
+        case front s of
+          Cons (#"\"" , s') =>
+            ( case lexStringBody (s' , Annot.sameline 1 pos) of
+                SOME (str , s'' , pos') => SOME (str , s'' , pos')
+              | NONE => NONE
+            )
+        | _ => NONE
+      val show = fn s => S.concat ["\"" , s , "\""]
+    end
+
+    (* Identifier (alphanumeric or symbolic) *)
+    structure Id = struct
+      type t = string
+      type 'a stream = 'a stream
+      fun lex (s , pos) =
+        case front s of
+          Cons (c , _) =>
+            if C.isAlpha c
+            then let val (id , s' , pos') = takeWhile isIdChar (s , pos)
+                 in SOME (id , s' , pos')
+                 end
+            else if isSymbolic c
+            then let val (id , s' , pos') = takeWhile isSymbolic (s , pos)
+                 in SOME (id , s' , pos')
+                 end
+            else NONE
+        | Nil => NONE
+      val show = fn s => s
+    end
+
+    (* Type variable: 'a, ''a *)
+    structure Tyvar = struct
+      type t = string
+      type 'a stream = 'a stream
+      fun lex (s , pos) =
+        case front s of
+          Cons (#"'" , s') =>
+            let val (rest , s'' , pos') = takeWhile isIdChar (s' , Annot.sameline 1 pos)
+            in SOME ("'" ^ rest , s'' , pos')
+            end
+        | _ => NONE
+      val show = fn s => s
+    end
+
+  end
+
+  structure Sml = SmlParser (
     structure Stream = Stream
     structure Trivial = struct
       type t = unit
@@ -144,155 +293,12 @@ structure SmlParser = struct
           go (s , pos , false)
         end
     end
-    structure Terminals = struct
-      (* Integer literal *)
-      structure Int = struct
-        type t = string
-        type 'a stream = 'a stream
-        fun lex (s , pos) =
-          case front s of
-            Cons (#"~" , s') =>
-              let val (digits , s'' , pos') = takeWhile C.isDigit (s' , Annot.sameline 1 pos)
-              in if S.size digits > 0
-                 then SOME ("~" ^ digits , s'' , pos')
-                 else NONE
-              end
-          | Cons (c , _) =>
-              if C.isDigit c
-              then let val (digits , s' , pos') = takeWhile C.isDigit (s , pos)
-                   in SOME (digits , s' , pos')
-                   end
-              else NONE
-          | Nil => NONE
-        val show = fn s => s
-      end
+    structure Terminals = Terminals
+  )
 
-      (* Word literal *)
-      structure Word = struct
-        type t = string
-        type 'a stream = 'a stream
-        fun lex (s , pos) =
-          case front s of
-            Cons (#"0" , s') =>
-              ( case front s' of
-                  Cons (#"w" , s'') =>
-                    let val (digits , s''' , pos') = takeWhile C.isDigit (s'' , Annot.sameline 2 pos)
-                    in if S.size digits > 0
-                       then SOME ("0w" ^ digits , s''' , pos')
-                       else NONE
-                    end
-                | _ => NONE
-              )
-          | _ => NONE
-        val show = fn s => s
-      end
-
-      (* Float literal *)
-      structure Float = struct
-        type t = string
-        type 'a stream = 'a stream
-        fun lex (s , pos) =
-          case front s of
-            Cons (#"~" , _) =>
-              let val (whole , s' , pos') = takeWhile (fn c => c = #"~" orelse C.isDigit c) (s , pos)
-              in
-                case front s' of
-                  Cons (#"." , s'') =>
-                    let val (frac , s''' , pos'') = takeWhile C.isDigit (s'' , Annot.sameline 1 pos')
-                    in if S.size frac > 0
-                       then SOME (whole ^ "." ^ frac , s''' , pos'')
-                       else NONE
-                    end
-                | _ => NONE
-              end
-          | Cons (c , _) =>
-              if C.isDigit c
-              then
-                let val (whole , s' , pos') = takeWhile C.isDigit (s , pos)
-                in
-                  case front s' of
-                    Cons (#"." , s'') =>
-                      let val (frac , s''' , pos'') = takeWhile C.isDigit (s'' , Annot.sameline 1 pos')
-                      in if S.size frac > 0
-                         then SOME (whole ^ "." ^ frac , s''' , pos'')
-                         else NONE
-                      end
-                  | _ => NONE
-                end
-              else NONE
-          | Nil => NONE
-        val show = fn s => s
-      end
-
-      (* Char literal: #"c" *)
-      structure Char = struct
-        type t = string
-        type 'a stream = 'a stream
-        fun lex (s , pos) =
-          case front s of
-            Cons (#"#" , s') =>
-              ( case front s' of
-                  Cons (#"\"" , s'') =>
-                    ( case lexCharBody (s'' , Annot.sameline 2 pos) of
-                        SOME (c , s''' , pos') => SOME (c , s''' , pos')
-                      | NONE => NONE
-                    )
-                | _ => NONE
-              )
-          | _ => NONE
-        val show = fn c => S.concat ["#\"" , c , "\""]
-      end
-
-      (* String literal *)
-      structure String = struct
-        type t = string
-        type 'a stream = 'a stream
-        fun lex (s , pos) =
-          case front s of
-            Cons (#"\"" , s') =>
-              ( case lexStringBody (s' , Annot.sameline 1 pos) of
-                  SOME (str , s'' , pos') => SOME (str , s'' , pos')
-                | NONE => NONE
-              )
-          | _ => NONE
-        val show = fn s => S.concat ["\"" , s , "\""]
-      end
-
-      (* Identifier (alphanumeric or symbolic) *)
-      structure Id = struct
-        type t = string
-        type 'a stream = 'a stream
-        fun lex (s , pos) =
-          case front s of
-            Cons (c , _) =>
-              if C.isAlpha c
-              then let val (id , s' , pos') = takeWhile isIdChar (s , pos)
-                   in SOME (id , s' , pos')
-                   end
-              else if isSymbolic c
-              then let val (id , s' , pos') = takeWhile isSymbolic (s , pos)
-                   in SOME (id , s' , pos')
-                   end
-              else NONE
-          | Nil => NONE
-        val show = fn s => s
-      end
-
-      (* Type variable: 'a, ''a *)
-      structure Tyvar = struct
-        type t = string
-        type 'a stream = 'a stream
-        fun lex (s , pos) =
-          case front s of
-            Cons (#"'" , s') =>
-              let val (rest , s'' , pos') = takeWhile isIdChar (s' , Annot.sameline 1 pos)
-              in SOME ("'" ^ rest , s'' , pos')
-              end
-          | _ => NONE
-        val show = fn s => s
-      end
-
-    end
+  structure Print = SmlPrint (
+    structure Ast = Sml
+    structure Terminals = Terminals
   )
 
   open Sml
@@ -306,7 +312,7 @@ structure SmlParser = struct
       print (S.concat ["parses: " , Int.toString (List.length results) , "\n"]);
       List.app
         (fn (result , _) =>
-          print (S.concat ["  " , printDecList result , "\n"]))
+          print (S.concat ["  " , Print.printDecList result , "\n"]))
         results
     end
 
@@ -319,7 +325,20 @@ structure SmlParser = struct
       print (S.concat ["parses: " , Int.toString (List.length results) , "\n"]);
       List.app
         (fn (result , _) =>
-          print (S.concat ["  " , printExp result , "\n"]))
+          print (S.concat ["  " , Print.printExp result , "\n"]))
+        results
+    end
+
+  fun runProg input =
+    let
+      val tokens = lex (fromString input) Annot.empty
+      val results = parse parseProgList tokens
+    in
+      print (S.concat ["input: " , input , "\n"]);
+      print (S.concat ["parses: " , Int.toString (List.length results) , "\n"]);
+      List.app
+        (fn (result , _) =>
+          print (S.concat ["  " , Print.printProgList result , "\n"]))
         results
     end
 end

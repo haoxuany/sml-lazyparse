@@ -20,7 +20,7 @@ structure Ast =
       | Opt of rule                    (* A? *)
       | Terminal of string             (* 'terminal' *)
       | Keyword of string              (* "terminal" *)
-      | Nonterminal of id           (* A *)
+      | Nonterminal of id              (* A *)
 
     (* Name ::= rule [ name Plus , left 3 ] | rule | ... *)
     type definition = { name : id , rule : (rule * property list) list }

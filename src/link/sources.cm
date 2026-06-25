@@ -4,7 +4,7 @@ library
   functor ParseInternal
   structure PrintBuffer
   signature TERMINAL
-  signature TERMINAL_PRINTABLE
+  signature PRINT_TERMINAL
 is
   ../../lib/cmlib/cmlib.cm
   ../../lib/sml-parcom/parcom.cm

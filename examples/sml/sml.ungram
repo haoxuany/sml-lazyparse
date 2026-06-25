@@ -87,14 +87,16 @@ PatRow ::= "..." [ name Wildcard ]
 // Types
 // ============================================================
 
-Typ ::= 'tyvar' [ name Var ]
-      | Typ LongId [ name ConApp , prec 3 ]
+TypNoStar ::= 'tyvar' [ name Var ]
+      | TypNoStar LongId [ name ConApp , prec 1 ]
       | "(" Typ "," Typ ("," Typ)* ")" LongId [ name ConAppMulti ]
       | LongId [ name Con ]
       | "(" Typ ")" [ name Parens ]
-      | Typ "->" Typ [ name Arrow , assoc right , prec 1 ]
-      | Typ ("*" Typ)+ [ name TupleTyp , prec 2 ]
       | "{" TypRow? "}" [ name Record ]
+
+Typ ::= TypNoStar [ name Inner ]
+      | TypNoStar ("*" TypNoStar)+ [ name TupleTyp ]
+      | Typ "->" Typ [ name Arrow , assoc right , prec 1 ]
 
 TypRow ::= Lab ":" Typ ("," Lab ":" Typ)* [ name TypRow ]
 
