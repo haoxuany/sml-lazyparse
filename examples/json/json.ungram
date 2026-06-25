@@ -11,3 +11,5 @@ Object ::= "{" (Member ("," Member)*)? "}" [ name Object ]
 Member ::= 'string' ":" Value [ name Member ]
 
 Array ::= "[" (Value ("," Value)*)? "]" [ name Array ]
+
+Repl ::= Value [ name Value ]

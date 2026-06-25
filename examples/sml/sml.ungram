@@ -26,10 +26,9 @@ LongId ::= 'id' ("." 'id')* [ name LongId ]
 // Expressions
 // ============================================================
 
-Exp ::= Con [ name Const ]
+AtomExp ::= Con [ name Const ]
       | "op" LongId [ name OpId ]
       | LongId [ name Id ]
-      | Exp Exp [ name App , assoc left , prec 8 ]
       | "(" Exp ")" [ name Parens ]
       | "(" Exp "," Exp ("," Exp)* ")" [ name Tuple ]
       | "{" ExpRow? "}" [ name Record ]
@@ -37,6 +36,8 @@ Exp ::= Con [ name Const ]
       | "[" ExpListInner? "]" [ name List ]
       | "(" Exp (";" Exp)+ ")" [ name Seq ]
       | "let" DecList "in" Exp (";" Exp)* "end" [ name Let ]
+
+Exp ::= (AtomExp)+ [ name App ]
       | Exp ":" Typ [ name Annot , prec 7 ]
       | "raise" Exp [ name Raise ]
       | Exp "handle" Match [ name Handle , prec 6 ]
@@ -87,15 +88,15 @@ PatRow ::= "..." [ name Wildcard ]
 // Types
 // ============================================================
 
-TypNoStar ::= 'tyvar' [ name Var ]
-      | TypNoStar LongId [ name ConApp , prec 1 ]
+AtomTyp ::= 'tyvar' [ name Var ]
+      | AtomTyp LongId [ name ConApp , prec 1 ]
       | "(" Typ "," Typ ("," Typ)* ")" LongId [ name ConAppMulti ]
       | LongId [ name Con ]
       | "(" Typ ")" [ name Parens ]
       | "{" TypRow? "}" [ name Record ]
 
-Typ ::= TypNoStar [ name Inner ]
-      | TypNoStar ("*" TypNoStar)+ [ name TupleTyp ]
+Typ ::= AtomTyp [ name Inner ]
+      | AtomTyp ("*" AtomTyp)+ [ name TupleTyp ]
       | Typ "->" Typ [ name Arrow , assoc right , prec 1 ]
 
 TypRow ::= Lab ":" Typ ("," Lab ":" Typ)* [ name TypRow ]

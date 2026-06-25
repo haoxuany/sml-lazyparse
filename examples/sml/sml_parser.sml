@@ -1,177 +1,84 @@
 
 structure SmlParser = struct
-  open Stream
+  structure LS = LexStream
+  structure R = Regex
 
   structure C = Char
   structure S = String
 
   (* SML symbolic characters *)
-  fun isSymbolic c =
-    case c of
-      #"!" => true | #"%" => true | #"&" => true | #"$" => true
-    | #"#" => true | #"+" => true | #"-" => true | #"/" => true
-    | #":" => true | #"<" => true | #"=" => true | #">" => true
-    | #"?" => true | #"@" => true | #"\\" => true | #"~" => true
-    | #"`" => true | #"^" => true | #"|" => true | #"*" => true
-    | _ => false
+  val symbolic = R.set
+    [ #"!" , #"%" , #"&" , #"$"
+    , #"#" , #"+" , #"-" , #"/"
+    , #":" , #"<" , #"=" , #">"
+    , #"?" , #"@" , #"\\" , #"~"
+    , #"`" , #"^" , #"|" , #"*"
+    ]
 
-  fun isIdChar c =
-    C.isAlphaNum c orelse c = #"'" orelse c = #"_"
-
-  (* advance position helpers *)
-  fun adv (s , pos) =
-    case front s of
-      Cons (c , s') =>
-        if c = #"\n" then (s' , Annot.newline 1 pos)
-        else (s' , Annot.sameline 1 pos)
-    | Nil => (s , pos)
-
-  (* consume while predicate holds, return string and new stream/pos *)
-  fun takeWhile pred (s , pos) =
-    let
-      fun go (acc , s , pos) =
-        case front s of
-          Cons (c , s') =>
-            if pred c
-            then go (c :: acc , s' , Annot.sameline 1 pos)
-            else (S.implode (List.rev acc) , s , pos)
-        | Nil => (S.implode (List.rev acc) , s , pos)
-    in
-      go (nil , s , pos)
-    end
-
-  (* lex an SML string literal (after opening ") *)
-  fun lexStringBody (s , pos) =
-    let
-      fun go (acc , s , pos) =
-        case front s of
-          Nil => NONE
-        | Cons (#"\"" , s') =>
-            SOME (S.implode (List.rev acc) , s' , Annot.sameline 1 pos)
-        | Cons (#"\\" , s') =>
-            ( case front s' of
-                Nil => NONE
-              | Cons (c , s'') =>
-                  go (c :: #"\\" :: acc , s'' , Annot.sameline 2 pos)
-            )
-        | Cons (c , s') =>
-            go (c :: acc , s' , Annot.sameline 1 pos)
-    in
-      go (nil , s , pos)
-    end
+  val idChar = R.alt
+    [ R.alphaNum
+    , R.exact #"'"
+    , R.exact #"_"
+    ]
 
   (* lex an SML char literal (after #") *)
-  fun lexCharBody (s , pos) =
-    case front s of
-      Nil => NONE
-    | Cons (#"\\" , s') =>
-        ( case front s' of
-            Nil => NONE
-          | Cons (c , s'') =>
-              ( case front s'' of
-                  Cons (#"\"" , s''') =>
-                    SOME (S.implode [#"\\", c] , s''' , Annot.sameline 3 pos)
+  fun lexCharBody ts =
+    case LS.front ts of
+      LS.Nil => NONE
+    | LS.Cons (#"\\" , ts') =>
+        ( case LS.front ts' of
+            LS.Nil => NONE
+          | LS.Cons (c , ts'') =>
+              ( case LS.front ts'' of
+                  LS.Cons (#"\"" , ts''') =>
+                    SOME (S.implode [#"\\", c] , ts''')
                 | _ => NONE
               )
         )
-    | Cons (c , s') =>
-        ( case front s' of
-            Cons (#"\"" , s'') =>
-              SOME (S.str c , s'' , Annot.sameline 2 pos)
+    | LS.Cons (c , ts') =>
+        ( case LS.front ts' of
+            LS.Cons (#"\"" , ts'') =>
+              SOME (S.str c , ts'')
           | _ => NONE
         )
 
   structure Terminals = struct
-    (* Integer literal *)
-    structure Int = struct
+    structure Int = LexCommon.RegexReplTerminal (
       type t = string
-      type 'a stream = 'a stream
-      fun lex (s , pos) =
-        case front s of
-          Cons (#"~" , s') =>
-            let val (digits , s'' , pos') = takeWhile C.isDigit (s' , Annot.sameline 1 pos)
-            in if S.size digits > 0
-               then SOME ("~" ^ digits , s'' , pos')
-               else NONE
-            end
-        | Cons (c , _) =>
-            if C.isDigit c
-            then let val (digits , s' , pos') = takeWhile C.isDigit (s , pos)
-                 in SOME (digits , s' , pos')
-                 end
-            else NONE
-        | Nil => NONE
-      val show = fn s => s
-    end
+      val regex = R.seq [R.opt (R.exact #"~") , R.plus R.digit]
+      fun map s = s
+      fun show s = s
+    )
 
-    (* Word literal *)
-    structure Word = struct
+    structure Word = LexCommon.RegexReplTerminal (
       type t = string
-      type 'a stream = 'a stream
-      fun lex (s , pos) =
-        case front s of
-          Cons (#"0" , s') =>
-            ( case front s' of
-                Cons (#"w" , s'') =>
-                  let val (digits , s''' , pos') = takeWhile C.isDigit (s'' , Annot.sameline 2 pos)
-                  in if S.size digits > 0
-                     then SOME ("0w" ^ digits , s''' , pos')
-                     else NONE
-                  end
-              | _ => NONE
-            )
-        | _ => NONE
-      val show = fn s => s
-    end
+      val regex = R.seq [R.exact #"0" , R.exact #"w" , R.plus R.digit]
+      fun map s = s
+      fun show s = s
+    )
 
-    (* Float literal *)
-    structure Float = struct
+    structure Float = LexCommon.RegexReplTerminal (
       type t = string
-      type 'a stream = 'a stream
-      fun lex (s , pos) =
-        case front s of
-          Cons (#"~" , _) =>
-            let val (whole , s' , pos') = takeWhile (fn c => c = #"~" orelse C.isDigit c) (s , pos)
-            in
-              case front s' of
-                Cons (#"." , s'') =>
-                  let val (frac , s''' , pos'') = takeWhile C.isDigit (s'' , Annot.sameline 1 pos')
-                  in if S.size frac > 0
-                     then SOME (whole ^ "." ^ frac , s''' , pos'')
-                     else NONE
-                  end
-              | _ => NONE
-            end
-        | Cons (c , _) =>
-            if C.isDigit c
-            then
-              let val (whole , s' , pos') = takeWhile C.isDigit (s , pos)
-              in
-                case front s' of
-                  Cons (#"." , s'') =>
-                    let val (frac , s''' , pos'') = takeWhile C.isDigit (s'' , Annot.sameline 1 pos')
-                    in if S.size frac > 0
-                       then SOME (whole ^ "." ^ frac , s''' , pos'')
-                       else NONE
-                    end
-                | _ => NONE
-              end
-            else NONE
-        | Nil => NONE
-      val show = fn s => s
-    end
+      val regex = R.seq
+        [ R.opt (R.exact #"~")
+        , R.plus R.digit
+        , R.exact #"."
+        , R.plus R.digit
+        ]
+      fun map s = s
+      fun show s = s
+    )
 
     (* Char literal: #"c" *)
     structure Char = struct
       type t = string
-      type 'a stream = 'a stream
-      fun lex (s , pos) =
-        case front s of
-          Cons (#"#" , s') =>
-            ( case front s' of
-                Cons (#"\"" , s'') =>
-                  ( case lexCharBody (s'' , Annot.sameline 2 pos) of
-                      SOME (c , s''' , pos') => SOME (c , s''' , pos')
+      fun lex ts =
+        case LS.front ts of
+          LS.Cons (#"#" , ts') =>
+            ( case LS.front ts' of
+                LS.Cons (#"\"" , ts'') =>
+                  ( case lexCharBody ts'' of
+                      SOME (c , ts''') => SOME (c , ts''')
                     | NONE => NONE
                   )
               | _ => NONE
@@ -180,117 +87,72 @@ structure SmlParser = struct
       val show = fn c => S.concat ["#\"" , c , "\""]
     end
 
-    (* String literal *)
-    structure String = struct
-      type t = string
-      type 'a stream = 'a stream
-      fun lex (s , pos) =
-        case front s of
-          Cons (#"\"" , s') =>
-            ( case lexStringBody (s' , Annot.sameline 1 pos) of
-                SOME (str , s'' , pos') => SOME (str , s'' , pos')
-              | NONE => NONE
-            )
-        | _ => NONE
-      val show = fn s => S.concat ["\"" , s , "\""]
-    end
+    structure String = LexCommon.StringTerminal
 
-    (* Identifier (alphanumeric or symbolic) *)
-    structure Id = struct
+    structure Id = LexCommon.RegexReplTerminal (
       type t = string
-      type 'a stream = 'a stream
-      fun lex (s , pos) =
-        case front s of
-          Cons (c , _) =>
-            if C.isAlpha c
-            then let val (id , s' , pos') = takeWhile isIdChar (s , pos)
-                 in SOME (id , s' , pos')
-                 end
-            else if isSymbolic c
-            then let val (id , s' , pos') = takeWhile isSymbolic (s , pos)
-                 in SOME (id , s' , pos')
-                 end
-            else NONE
-        | Nil => NONE
-      val show = fn s => s
-    end
+      val regex = R.alt
+        [ R.seq [R.alpha , R.star idChar]
+        , R.plus symbolic
+        ]
+      fun map s = s
+      fun show s = s
+    )
 
-    (* Type variable: 'a, ''a *)
-    structure Tyvar = struct
+    structure Tyvar = LexCommon.RegexReplTerminal (
       type t = string
-      type 'a stream = 'a stream
-      fun lex (s , pos) =
-        case front s of
-          Cons (#"'" , s') =>
-            let val (rest , s'' , pos') = takeWhile isIdChar (s' , Annot.sameline 1 pos)
-            in SOME ("'" ^ rest , s'' , pos')
-            end
-        | _ => NONE
-      val show = fn s => s
-    end
+      val regex = R.seq [R.exact #"'" , R.star idChar]
+      fun map s = s
+      fun show s = s
+    )
 
   end
 
   structure Sml = SmlParser (
-    structure Stream = Stream
     structure Trivial = struct
       type t = unit
-      type 'a stream = 'a stream
 
-      fun lex (s , pos) =
+      fun lex ts =
         let
-          fun skipLineComment (s , pos) =
-            case front s of
-              Nil => (s , pos)
-            | Cons (#"\n" , s') => (s' , Annot.newline 1 pos)
-            | Cons (_ , s') => skipLineComment (s' , Annot.sameline 1 pos)
-
-          fun skipBlockComment (depth , s , pos) =
-            case front s of
-              Nil => (s , pos)
-            | Cons (#"(" , s') =>
-                ( case front s' of
-                    Cons (#"*" , s'') =>
-                      skipBlockComment (depth + 1 , s'' , Annot.sameline 2 pos)
-                  | _ => skipBlockComment (depth , s' , Annot.sameline 1 pos)
+          fun skipBlockComment (depth , ts) =
+            case LS.front ts of
+              LS.Nil => ts
+            | LS.Cons (#"(" , ts') =>
+                ( case LS.front ts' of
+                    LS.Cons (#"*" , ts'') =>
+                      skipBlockComment (depth + 1 , ts'')
+                  | _ => skipBlockComment (depth , ts')
                 )
-            | Cons (#"*" , s') =>
-                ( case front s' of
-                    Cons (#")" , s'') =>
-                      if depth = 1 then (s'' , Annot.sameline 2 pos)
-                      else skipBlockComment (depth - 1 , s'' , Annot.sameline 2 pos)
-                  | _ => skipBlockComment (depth , s' , Annot.sameline 1 pos)
+            | LS.Cons (#"*" , ts') =>
+                ( case LS.front ts' of
+                    LS.Cons (#")" , ts'') =>
+                      if depth = 1 then ts''
+                      else skipBlockComment (depth - 1 , ts'')
+                  | _ => skipBlockComment (depth , ts')
                 )
-            | Cons (#"\n" , s') =>
-                skipBlockComment (depth , s' , Annot.newline 1 pos)
-            | Cons (_ , s') =>
-                skipBlockComment (depth , s' , Annot.sameline 1 pos)
+            | LS.Cons (_ , ts') =>
+                skipBlockComment (depth , ts')
 
-          fun go (s , pos , consumed) =
-            case front s of
-              Cons (c , s') =>
+          fun skip (ts , consumed) =
+            case LS.front ts of
+              LS.Cons (c , ts') =>
                 if C.isSpace c
-                then
-                  let val pos' =
-                    if c = #"\n" then Annot.newline 1 pos
-                    else Annot.sameline 1 pos
-                  in go (s' , pos' , true)
-                  end
+                then skip (ts' , true)
                 else if c = #"(" then
-                  ( case front s' of
-                      Cons (#"*" , s'') =>
-                        let val (s''' , pos') = skipBlockComment (1 , s'' , Annot.sameline 2 pos)
-                        in go (s''' , pos' , true)
+                  ( case LS.front ts' of
+                      LS.Cons (#"*" , ts'') =>
+                        let val ts''' = skipBlockComment (1 , ts'')
+                        in skip (ts''' , true)
                         end
                     | _ =>
-                        if consumed then SOME (() , s , pos) else NONE
+                        if consumed then SOME (() , ts) else NONE
                   )
                 else
-                  if consumed then SOME (() , s , pos) else NONE
-            | Nil =>
-                if consumed then SOME (() , s , pos) else NONE
+                  if consumed then SOME (() , ts) else NONE
+            | LS.Nil =>
+                if consumed then SOME (() , ts) else NONE
         in
-          go (s , pos , false)
+          skip (ts , false)
         end
     end
     structure Terminals = Terminals
@@ -305,7 +167,7 @@ structure SmlParser = struct
 
   fun run input =
     let
-      val tokens = lex (fromString input) Annot.empty
+      val tokens = lex (Stream.fromString input) Annot.empty
       val results = parse parseDecList tokens
     in
       print (S.concat ["input: " , input , "\n"]);
@@ -318,7 +180,7 @@ structure SmlParser = struct
 
   fun runExp input =
     let
-      val tokens = lex (fromString input) Annot.empty
+      val tokens = lex (Stream.fromString input) Annot.empty
       val results = parse parseExp tokens
     in
       print (S.concat ["input: " , input , "\n"]);
@@ -331,7 +193,7 @@ structure SmlParser = struct
 
   fun runProg input =
     let
-      val tokens = lex (fromString input) Annot.empty
+      val tokens = lex (Stream.fromString input) Annot.empty
       val results = parse parseProgList tokens
     in
       print (S.concat ["input: " , input , "\n"]);

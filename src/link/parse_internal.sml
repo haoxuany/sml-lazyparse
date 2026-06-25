@@ -1,24 +1,18 @@
 
 (* common internal code to avoid codegening everything *)
 functor ParseInternal (
-  structure Stream : STREAM
   structure Trivial : TERMINAL
-    where type 'a stream = 'a Stream.stream
   structure Terminal : sig
     type t
-    type 'a stream
 
-    val lex : ((char stream * Annot.pos) -> (t * char stream * Annot.pos)
-    option) list
+    val lex : (LexStream.stream -> (t * LexStream.stream) option) list
   end
-    where type 'a stream = 'a Stream.stream
   val keywords : (string * int) list
 ) = struct
 
   type 'a annot = { node : 'a , span : Annot.span }
 
   structure LexInternal = LexInternal (
-    structure Stream = Stream
     structure Keyword = struct
       type t = int
       val keywords = keywords
@@ -137,6 +131,26 @@ functor ParseInternal (
         , span = annot_list (List.map #span v)
         })
 
+  fun longest (v : 'a t)
+    : 'a t =
+    Parcom.join
+      (List.foldr
+        (fn ( candidate as ( _ , ( s , _ ) ) , best ) =>
+          case best of
+            nil => [candidate]
+          | [( _ , ( bs , _ ) )] =>
+              let
+                val cpos = LexInternal.TokenStream.pos s
+                val bpos = LexInternal.TokenStream.pos bs
+              in
+                case Annot.compare ( cpos , bpos ) of
+                  GREATER => [candidate]
+                | EQUAL => candidate :: best
+                | _ => best
+              end
+          | _ => best)
+        nil)
+       v
 
   type 'a parser = 'a t_memo
   type token_stream =
@@ -145,6 +159,8 @@ functor ParseInternal (
   fun lex s pos =
     LexInternal.TokenStream.fromStream (LexInternal.lex s pos) pos
 
+  exception LexError = LexInternal.LexError
+
   fun return_node (node : 'a) (l : Annot.span list)
     : 'a annot Parcom.t  =
     return { node = node , span = annot_list l }
@@ -152,10 +168,6 @@ functor ParseInternal (
   fun annot_add ({ span , ... } : 'a annot)
     : Annot.span = span
 
-  fun create (f : 'a -> 'b) (p : 'a annot Parcom.t)
-    : 'b annot Parcom.t =
-    Parcom.map
-    (fn { node , span } => { node = f node , span = span })
-    p
+  val create = map
 
 end

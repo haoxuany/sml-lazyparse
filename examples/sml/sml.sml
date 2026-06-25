@@ -19,17 +19,17 @@ signature SML_AST = sig
   and lab' = LabId of id annot
     | LabNum of int annot
   and long_id' = LongIdLongId of id annot * id annot list
-  and exp' = ExpConst of con
-    | ExpOpId of long_id
-    | ExpId of long_id
-    | ExpApp of exp * exp
-    | ExpParens of exp
-    | ExpTuple of exp * exp * exp list
-    | ExpRecord of exp_row option
-    | ExpSelector of lab
-    | ExpList of exp_list_inner option
-    | ExpSeq of exp * exp list
-    | ExpLet of dec_list * exp * exp list
+  and atom_exp' = AtomExpConst of con
+    | AtomExpOpId of long_id
+    | AtomExpId of long_id
+    | AtomExpParens of exp
+    | AtomExpTuple of exp * exp * exp list
+    | AtomExpRecord of exp_row option
+    | AtomExpSelector of lab
+    | AtomExpList of exp_list_inner option
+    | AtomExpSeq of exp * exp list
+    | AtomExpLet of dec_list * exp * exp list
+  and exp' = ExpApp of atom_exp list
     | ExpAnnot of exp * typ
     | ExpRaise of exp
     | ExpHandle of exp * match
@@ -60,14 +60,14 @@ signature SML_AST = sig
   and pat_row' = PatRowWildcard
     | PatRowPat of lab * pat * pat_row option
     | PatRowVar of id annot * typ option * pat option * pat_row option
-  and typ_no_star' = TypNoStarVar of tyvar annot
-    | TypNoStarConApp of typ_no_star * long_id
-    | TypNoStarConAppMulti of typ * typ * typ list * long_id
-    | TypNoStarCon of long_id
-    | TypNoStarParens of typ
-    | TypNoStarRecord of typ_row option
-  and typ' = TypInner of typ_no_star
-    | TypTupleTyp of typ_no_star * typ_no_star list
+  and atom_typ' = AtomTypVar of tyvar annot
+    | AtomTypConApp of atom_typ * long_id
+    | AtomTypConAppMulti of typ * typ * typ list * long_id
+    | AtomTypCon of long_id
+    | AtomTypParens of typ
+    | AtomTypRecord of typ_row option
+  and typ' = TypInner of atom_typ
+    | TypTupleTyp of atom_typ * atom_typ list
     | TypArrow of typ * typ
   and typ_row' = TypRowTypRow of lab * typ * (lab * typ) list
   and dec' = DecVal of ty_var_seq * val_bind
@@ -144,6 +144,7 @@ signature SML_AST = sig
   withtype con = con' annot
   and lab = lab' annot
   and long_id = long_id' annot
+  and atom_exp = atom_exp' annot
   and exp = exp' annot
   and exp_list_inner = exp_list_inner' annot
   and exp_row = exp_row' annot
@@ -152,7 +153,7 @@ signature SML_AST = sig
   and pat = pat' annot
   and pat_list_inner = pat_list_inner' annot
   and pat_row = pat_row' annot
-  and typ_no_star = typ_no_star' annot
+  and atom_typ = atom_typ' annot
   and typ = typ' annot
   and typ_row = typ_row' annot
   and dec = dec' annot
@@ -186,16 +187,15 @@ signature SML_AST = sig
 end
 
 functor SmlParser (
-  structure Stream : STREAM
-  structure Trivial : TERMINAL where type 'a stream = 'a Stream.stream
+  structure Trivial : TERMINAL
   structure Terminals : sig
-    structure Char : TERMINAL where type 'a stream = 'a Stream.stream
-    structure Float : TERMINAL where type 'a stream = 'a Stream.stream
-    structure Id : TERMINAL where type 'a stream = 'a Stream.stream
-    structure Int : TERMINAL where type 'a stream = 'a Stream.stream
-    structure String : TERMINAL where type 'a stream = 'a Stream.stream
-    structure Tyvar : TERMINAL where type 'a stream = 'a Stream.stream
-    structure Word : TERMINAL where type 'a stream = 'a Stream.stream
+    structure Char : TERMINAL
+    structure Float : TERMINAL
+    structure Id : TERMINAL
+    structure Int : TERMINAL
+    structure String : TERMINAL
+    structure Tyvar : TERMINAL
+    structure Word : TERMINAL
   end
 ) :>
 sig
@@ -210,10 +210,12 @@ sig
   
   type 'a parser
   type token_stream
+  exception LexError of Char.char * Annot.pos
   val lex : Char.char Stream.stream -> Annot.pos -> token_stream
   val parseCon : con parser
   val parseLab : lab parser
   val parseLongId : long_id parser
+  val parseAtomExp : atom_exp parser
   val parseExp : exp parser
   val parseExpListInner : exp_list_inner parser
   val parseExpRow : exp_row parser
@@ -222,7 +224,7 @@ sig
   val parsePat : pat parser
   val parsePatListInner : pat_list_inner parser
   val parsePatRow : pat_row parser
-  val parseTypNoStar : typ_no_star parser
+  val parseAtomTyp : atom_typ parser
   val parseTyp : typ parser
   val parseTypRow : typ_row parser
   val parseDec : dec parser
@@ -273,17 +275,17 @@ struct
   and lab' = LabId of id annot
     | LabNum of int annot
   and long_id' = LongIdLongId of id annot * id annot list
-  and exp' = ExpConst of con
-    | ExpOpId of long_id
-    | ExpId of long_id
-    | ExpApp of exp * exp
-    | ExpParens of exp
-    | ExpTuple of exp * exp * exp list
-    | ExpRecord of exp_row option
-    | ExpSelector of lab
-    | ExpList of exp_list_inner option
-    | ExpSeq of exp * exp list
-    | ExpLet of dec_list * exp * exp list
+  and atom_exp' = AtomExpConst of con
+    | AtomExpOpId of long_id
+    | AtomExpId of long_id
+    | AtomExpParens of exp
+    | AtomExpTuple of exp * exp * exp list
+    | AtomExpRecord of exp_row option
+    | AtomExpSelector of lab
+    | AtomExpList of exp_list_inner option
+    | AtomExpSeq of exp * exp list
+    | AtomExpLet of dec_list * exp * exp list
+  and exp' = ExpApp of atom_exp list
     | ExpAnnot of exp * typ
     | ExpRaise of exp
     | ExpHandle of exp * match
@@ -314,14 +316,14 @@ struct
   and pat_row' = PatRowWildcard
     | PatRowPat of lab * pat * pat_row option
     | PatRowVar of id annot * typ option * pat option * pat_row option
-  and typ_no_star' = TypNoStarVar of tyvar annot
-    | TypNoStarConApp of typ_no_star * long_id
-    | TypNoStarConAppMulti of typ * typ * typ list * long_id
-    | TypNoStarCon of long_id
-    | TypNoStarParens of typ
-    | TypNoStarRecord of typ_row option
-  and typ' = TypInner of typ_no_star
-    | TypTupleTyp of typ_no_star * typ_no_star list
+  and atom_typ' = AtomTypVar of tyvar annot
+    | AtomTypConApp of atom_typ * long_id
+    | AtomTypConAppMulti of typ * typ * typ list * long_id
+    | AtomTypCon of long_id
+    | AtomTypParens of typ
+    | AtomTypRecord of typ_row option
+  and typ' = TypInner of atom_typ
+    | TypTupleTyp of atom_typ * atom_typ list
     | TypArrow of typ * typ
   and typ_row' = TypRowTypRow of lab * typ * (lab * typ) list
   and dec' = DecVal of ty_var_seq * val_bind
@@ -398,6 +400,7 @@ struct
   withtype con = con' annot
   and lab = lab' annot
   and long_id = long_id' annot
+  and atom_exp = atom_exp' annot
   and exp = exp' annot
   and exp_list_inner = exp_list_inner' annot
   and exp_row = exp_row' annot
@@ -406,7 +409,7 @@ struct
   and pat = pat' annot
   and pat_list_inner = pat_list_inner' annot
   and pat_row = pat_row' annot
-  and typ_no_star = typ_no_star' annot
+  and atom_typ = atom_typ' annot
   and typ = typ' annot
   and typ_row = typ_row' annot
   and dec = dec' annot
@@ -446,39 +449,37 @@ struct
   | TerminalWord of Terminals.Word.t
   
   structure Internal = ParseInternal (
-    structure Stream = Stream
     structure Trivial = Trivial
     structure Terminal = struct
       type t = terminal_token
-      type 'a stream = 'a Stream.stream
       val lex =
-        [ (fn (s , p) =>
-            case Terminals.Char.lex (s , p) of
-              SOME (v , s' , p') => SOME (TerminalChar v , s' , p')
+        [ (fn ts =>
+            case Terminals.Char.lex ts of
+              SOME (v , ts') => SOME (TerminalChar v , ts')
             | NONE => NONE)
-        , (fn (s , p) =>
-            case Terminals.Float.lex (s , p) of
-              SOME (v , s' , p') => SOME (TerminalFloat v , s' , p')
+        , (fn ts =>
+            case Terminals.Float.lex ts of
+              SOME (v , ts') => SOME (TerminalFloat v , ts')
             | NONE => NONE)
-        , (fn (s , p) =>
-            case Terminals.Id.lex (s , p) of
-              SOME (v , s' , p') => SOME (TerminalId v , s' , p')
+        , (fn ts =>
+            case Terminals.Id.lex ts of
+              SOME (v , ts') => SOME (TerminalId v , ts')
             | NONE => NONE)
-        , (fn (s , p) =>
-            case Terminals.Int.lex (s , p) of
-              SOME (v , s' , p') => SOME (TerminalInt v , s' , p')
+        , (fn ts =>
+            case Terminals.Int.lex ts of
+              SOME (v , ts') => SOME (TerminalInt v , ts')
             | NONE => NONE)
-        , (fn (s , p) =>
-            case Terminals.String.lex (s , p) of
-              SOME (v , s' , p') => SOME (TerminalString v , s' , p')
+        , (fn ts =>
+            case Terminals.String.lex ts of
+              SOME (v , ts') => SOME (TerminalString v , ts')
             | NONE => NONE)
-        , (fn (s , p) =>
-            case Terminals.Tyvar.lex (s , p) of
-              SOME (v , s' , p') => SOME (TerminalTyvar v , s' , p')
+        , (fn ts =>
+            case Terminals.Tyvar.lex ts of
+              SOME (v , ts') => SOME (TerminalTyvar v , ts')
             | NONE => NONE)
-        , (fn (s , p) =>
-            case Terminals.Word.lex (s , p) of
-              SOME (v , s' , p') => SOME (TerminalWord v , s' , p')
+        , (fn ts =>
+            case Terminals.Word.lex ts of
+              SOME (v , ts') => SOME (TerminalWord v , ts')
             | NONE => NONE)
         ]
     end
@@ -557,6 +558,7 @@ struct
     val parseConDummy : con t_dummy = dummy ()
     val parseLabDummy : lab t_dummy = dummy ()
     val parseLongIdDummy : long_id t_dummy = dummy ()
+    val parseAtomExpDummy : atom_exp t_dummy = dummy ()
     val parseExpDummy : exp t_dummy = dummy ()
     val parseExpListInnerDummy : exp_list_inner t_dummy = dummy ()
     val parseExpRowDummy : exp_row t_dummy = dummy ()
@@ -565,7 +567,7 @@ struct
     val parsePatDummy : pat t_dummy = dummy ()
     val parsePatListInnerDummy : pat_list_inner t_dummy = dummy ()
     val parsePatRowDummy : pat_row t_dummy = dummy ()
-    val parseTypNoStarDummy : typ_no_star t_dummy = dummy ()
+    val parseAtomTypDummy : atom_typ t_dummy = dummy ()
     val parseTypDummy : typ t_dummy = dummy ()
     val parseTypRowDummy : typ_row t_dummy = dummy ()
     val parseDecDummy : dec t_dummy = dummy ()
@@ -603,19 +605,9 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseString =
-            create ConString (
-              bind (parseTerminalString) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
-  
-          val parseChar =
-            create ConChar (
-              bind (parseTerminalChar) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
-  
-          val parseFloat =
-            create ConFloat (
-              bind (parseTerminalFloat) (fn v0 =>
+          val parseInt =
+            create ConInt (
+              bind (parseTerminalInt) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseWord =
@@ -623,22 +615,32 @@ struct
               bind (parseTerminalWord) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
-          val parseInt =
-            create ConInt (
-              bind (parseTerminalInt) (fn v0 =>
+          val parseFloat =
+            create ConFloat (
+              bind (parseTerminalFloat) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
+          val parseChar =
+            create ConChar (
+              bind (parseTerminalChar) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
+          val parseString =
+            create ConString (
+              bind (parseTerminalString) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
         in either
-        [ parseString
-        , parseChar
-        , parseFloat
+        [ parseInt
         , parseWord
-        , parseInt
+        , parseFloat
+        , parseChar
+        , parseString
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Lab *)
@@ -646,24 +648,24 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseNum =
-            create LabNum (
-              bind (parseTerminalInt) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
-  
           val parseId =
             create LabId (
               bind (parseTerminalId) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
+          val parseNum =
+            create LabNum (
+              bind (parseTerminalInt) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
         in either
-        [ parseNum
-        , parseId
+        [ parseId
+        , parseNum
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* LongId *)
@@ -690,88 +692,39 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
-    (* Exp *)
-    val parseExp =
+    (* AtomExp *)
+    val parseAtomExp =
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseFn =
-            create ExpFn (
-              bind (keyword 27) (fn v0 =>
-              bind (parseNonterminal (deref parseMatchDummy)) (fn v1 =>
+          val parseConst =
+            create AtomExpConst (
+              bind (parseNonterminal (deref parseConDummy)) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
+          val parseOpId =
+            create AtomExpOpId (
+              bind (keyword 40) (fn v0 =>
+              bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
-          val parseCase =
-            create ExpCase (
-              bind (keyword 20) (fn v0 =>
-              bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
-              bind (keyword 39) (fn v2 =>
-              bind (parseNonterminal (deref parseMatchDummy)) (fn v3 =>
-              return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+          val parseId =
+            create AtomExpId (
+              bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
   
-          val parseLet =
-            create ExpLet (
-              bind (keyword 36) (fn v0 =>
-              bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
-              bind (keyword 32) (fn v2 =>
-              bind (parseNonterminal (deref parseExpDummy)) (fn v3 =>
-              bind (starLongest (
-                bind (
-                  bind (keyword 10) (fn v6 =>
-                  bind (parseNonterminal (deref parseExpDummy)) (fn v7 =>
-                  return_node (#node v7) [ annot_add v6 , annot_add v7 ])))
-                (fn v5 =>
-                return_node (#node v5) [ annot_add v5 ])))
-              (fn v4 =>
-              bind (keyword 24) (fn v5 =>
-              return_node ((#node v1) , (#node v3) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
-  
-          val parseSeq =
-            create ExpSeq (
+          val parseParens =
+            create AtomExpParens (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
-              bind (plusLongest (
-                bind (
-                  bind (keyword 10) (fn v4 =>
-                  bind (parseNonterminal (deref parseExpDummy)) (fn v5 =>
-                  return_node (#node v5) [ annot_add v4 , annot_add v5 ])))
-                (fn v3 =>
-                return_node (#node v3) [ annot_add v3 ])))
-              (fn v2 =>
-              bind (keyword 2) (fn v3 =>
-              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
-  
-          val parseList =
-            create ExpList (
-              bind (keyword 13) (fn v0 =>
-              bind (optionalLongest (
-                bind (parseNonterminal (deref parseExpListInnerDummy)) (fn v2 =>
-                return_node (#node v2) [ annot_add v2 ])))
-              (fn v1 =>
-              bind (keyword 14) (fn v2 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
-          val parseSelector =
-            create ExpSelector (
-              bind (keyword 0) (fn v0 =>
-              bind (parseNonterminal (deref parseLabDummy)) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
-  
-          val parseRecord =
-            create ExpRecord (
-              bind (keyword 57) (fn v0 =>
-              bind (optionalLongest (
-                bind (parseNonterminal (deref parseExpRowDummy)) (fn v2 =>
-                return_node (#node v2) [ annot_add v2 ])))
-              (fn v1 =>
-              bind (keyword 59) (fn v2 =>
+              bind (keyword 2) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseTuple =
-            create ExpTuple (
+            create AtomExpTuple (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
               bind (keyword 4) (fn v2 =>
@@ -787,56 +740,113 @@ struct
               bind (keyword 2) (fn v5 =>
               return_node ((#node v1) , (#node v3) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
   
-          val parseParens =
-            create ExpParens (
-              bind (keyword 1) (fn v0 =>
-              bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
-              bind (keyword 2) (fn v2 =>
+          val parseRecord =
+            create AtomExpRecord (
+              bind (keyword 57) (fn v0 =>
+              bind (optionalLongest (
+                bind (parseNonterminal (deref parseExpRowDummy)) (fn v2 =>
+                return_node (#node v2) [ annot_add v2 ])))
+              (fn v1 =>
+              bind (keyword 59) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
-          val parseId =
-            create ExpId (
-              bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
-  
-          val parseOpId =
-            create ExpOpId (
-              bind (keyword 40) (fn v0 =>
-              bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
+          val parseSelector =
+            create AtomExpSelector (
+              bind (keyword 0) (fn v0 =>
+              bind (parseNonterminal (deref parseLabDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
-          val parseConst =
-            create ExpConst (
-              bind (parseNonterminal (deref parseConDummy)) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
+          val parseList =
+            create AtomExpList (
+              bind (keyword 13) (fn v0 =>
+              bind (optionalLongest (
+                bind (parseNonterminal (deref parseExpListInnerDummy)) (fn v2 =>
+                return_node (#node v2) [ annot_add v2 ])))
+              (fn v1 =>
+              bind (keyword 14) (fn v2 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+  
+          val parseSeq =
+            create AtomExpSeq (
+              bind (keyword 1) (fn v0 =>
+              bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
+              bind (plusLongest (
+                bind (
+                  bind (keyword 10) (fn v4 =>
+                  bind (parseNonterminal (deref parseExpDummy)) (fn v5 =>
+                  return_node (#node v5) [ annot_add v4 , annot_add v5 ])))
+                (fn v3 =>
+                return_node (#node v3) [ annot_add v3 ])))
+              (fn v2 =>
+              bind (keyword 2) (fn v3 =>
+              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+  
+          val parseLet =
+            create AtomExpLet (
+              bind (keyword 36) (fn v0 =>
+              bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
+              bind (keyword 32) (fn v2 =>
+              bind (parseNonterminal (deref parseExpDummy)) (fn v3 =>
+              bind (starLongest (
+                bind (
+                  bind (keyword 10) (fn v6 =>
+                  bind (parseNonterminal (deref parseExpDummy)) (fn v7 =>
+                  return_node (#node v7) [ annot_add v6 , annot_add v7 ])))
+                (fn v5 =>
+                return_node (#node v5) [ annot_add v5 ])))
+              (fn v4 =>
+              bind (keyword 24) (fn v5 =>
+              return_node ((#node v1) , (#node v3) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
   
         in either
-        [ parseFn
-        , parseCase
-        , parseLet
-        , parseSeq
-        , parseList
-        , parseSelector
-        , parseRecord
-        , parseTuple
-        , parseParens
-        , parseId
+        [ parseConst
         , parseOpId
-        , parseConst
+        , parseId
+        , parseParens
+        , parseTuple
+        , parseRecord
+        , parseSelector
+        , parseList
+        , parseSeq
+        , parseLet
         ]
         end)
   
-        val parseLevel8 = fix (fn parseLevel8 =>
+      in
+        longest (forget parseAtom)
+      end
+  
+    (* Exp *)
+    val parseExp =
+      let
+        val parseAtom = fix (fn parseAtom =>
         let
           val parseApp =
             create ExpApp (
-              bind (parseNonterminal parseLevel8) (fn v0 =>
-              bind (parseNonterminal (forget parseAtom)) (fn v1 =>
-              return_node ((#node v0) , (#node v1)) [ annot_add v0 , annot_add v1 ])))
+              bind (plusLongest (
+                bind (parseNonterminal (deref parseAtomExpDummy)) (fn v1 =>
+                return_node (#node v1) [ annot_add v1 ])))
+              (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
+          val parseCase =
+            create ExpCase (
+              bind (keyword 20) (fn v0 =>
+              bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
+              bind (keyword 39) (fn v2 =>
+              bind (parseNonterminal (deref parseMatchDummy)) (fn v3 =>
+              return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+  
+          val parseFn =
+            create ExpFn (
+              bind (keyword 27) (fn v0 =>
+              bind (parseNonterminal (deref parseMatchDummy)) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
         in either
-        [ (forget parseAtom)
-        , parseApp
+        [ parseApp
+        , parseCase
+        , parseFn
         ]
         end)
   
@@ -850,7 +860,7 @@ struct
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
         in either
-        [ (forget parseLevel8)
+        [ (forget parseAtom)
         , parseAnnot
         ]
         end)
@@ -872,13 +882,18 @@ struct
   
         val parseLevel5 = fix (fn parseLevel5 =>
         let
-          val parseWhile =
-            create ExpWhile (
-              bind (keyword 54) (fn v0 =>
-              bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
-              bind (keyword 22) (fn v2 =>
-              bind (parseNonterminal parseLevel5) (fn v3 =>
-              return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+          val parseRaise =
+            create ExpRaise (
+              bind (keyword 43) (fn v0 =>
+              bind (parseNonterminal parseLevel5) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+  
+          val parseAndAlso =
+            create ExpAndAlso (
+              bind (parseNonterminal parseLevel5) (fn v0 =>
+              bind (keyword 18) (fn v1 =>
+              bind (parseNonterminal (forget parseLevel6)) (fn v2 =>
+              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseIf =
             create ExpIf (
@@ -890,25 +905,20 @@ struct
               bind (parseNonterminal parseLevel5) (fn v5 =>
               return_node ((#node v1) , (#node v3) , (#node v5)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
   
-          val parseAndAlso =
-            create ExpAndAlso (
-              bind (parseNonterminal parseLevel5) (fn v0 =>
-              bind (keyword 18) (fn v1 =>
-              bind (parseNonterminal (forget parseLevel6)) (fn v2 =>
-              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
-          val parseRaise =
-            create ExpRaise (
-              bind (keyword 43) (fn v0 =>
-              bind (parseNonterminal parseLevel5) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+          val parseWhile =
+            create ExpWhile (
+              bind (keyword 54) (fn v0 =>
+              bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
+              bind (keyword 22) (fn v2 =>
+              bind (parseNonterminal parseLevel5) (fn v3 =>
+              return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
         in either
         [ (forget parseLevel6)
-        , parseWhile
-        , parseIf
-        , parseAndAlso
         , parseRaise
+        , parseAndAlso
+        , parseIf
+        , parseWhile
         ]
         end)
   
@@ -928,7 +938,7 @@ struct
         end)
   
       in
-        forget parseLevel4
+        longest (forget parseLevel4)
       end
   
     (* ExpListInner *)
@@ -955,7 +965,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* ExpRow *)
@@ -986,7 +996,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Match *)
@@ -1013,7 +1023,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* MatchArm *)
@@ -1034,7 +1044,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Pat *)
@@ -1042,24 +1052,42 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseList =
-            create PatList (
-              bind (keyword 13) (fn v0 =>
-              bind (optionalLongest (
-                bind (parseNonterminal (deref parsePatListInnerDummy)) (fn v2 =>
-                return_node (#node v2) [ annot_add v2 ])))
-              (fn v1 =>
-              bind (keyword 14) (fn v2 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+          val parseConst =
+            create PatConst (
+              bind (parseNonterminal (deref parseConDummy)) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
   
-          val parseRecord =
-            create PatRecord (
-              bind (keyword 57) (fn v0 =>
+          val parseWildcard =
+            create (fn () => PatWildcard) (
+              bind (keyword 15) (fn v0 =>
+              return_node () [ annot_add v0 ]))
+  
+          val parseOpVar =
+            create PatOpVar (
+              bind (keyword 40) (fn v0 =>
+              bind (parseTerminalId) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+  
+          val parseVar =
+            create PatVar (
+              bind (parseTerminalId) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
+          val parseOpCon =
+            create PatOpCon (
+              bind (keyword 40) (fn v0 =>
+              bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
               bind (optionalLongest (
-                bind (parseNonterminal (deref parsePatRowDummy)) (fn v2 =>
-                return_node (#node v2) [ annot_add v2 ])))
-              (fn v1 =>
-              bind (keyword 59) (fn v2 =>
+                bind (parseNonterminal (deref parsePatDummy)) (fn v3 =>
+                return_node (#node v3) [ annot_add v3 ])))
+              (fn v2 =>
+              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+  
+          val parseParens =
+            create PatParens (
+              bind (keyword 1) (fn v0 =>
+              bind (parseNonterminal (deref parsePatDummy)) (fn v1 =>
+              bind (keyword 2) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseTuple =
@@ -1079,73 +1107,53 @@ struct
               bind (keyword 2) (fn v5 =>
               return_node ((#node v1) , (#node v3) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
   
-          val parseParens =
-            create PatParens (
-              bind (keyword 1) (fn v0 =>
-              bind (parseNonterminal (deref parsePatDummy)) (fn v1 =>
-              bind (keyword 2) (fn v2 =>
+          val parseRecord =
+            create PatRecord (
+              bind (keyword 57) (fn v0 =>
+              bind (optionalLongest (
+                bind (parseNonterminal (deref parsePatRowDummy)) (fn v2 =>
+                return_node (#node v2) [ annot_add v2 ])))
+              (fn v1 =>
+              bind (keyword 59) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
-          val parseOpCon =
-            create PatOpCon (
-              bind (keyword 40) (fn v0 =>
-              bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
+          val parseList =
+            create PatList (
+              bind (keyword 13) (fn v0 =>
               bind (optionalLongest (
-                bind (parseNonterminal (deref parsePatDummy)) (fn v3 =>
-                return_node (#node v3) [ annot_add v3 ])))
-              (fn v2 =>
-              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
-          val parseVar =
-            create PatVar (
-              bind (parseTerminalId) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
-  
-          val parseOpVar =
-            create PatOpVar (
-              bind (keyword 40) (fn v0 =>
-              bind (parseTerminalId) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
-  
-          val parseWildcard =
-            create (fn () => PatWildcard) (
-              bind (keyword 15) (fn v0 =>
-              return_node () [ annot_add v0 ]))
-  
-          val parseConst =
-            create PatConst (
-              bind (parseNonterminal (deref parseConDummy)) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
+                bind (parseNonterminal (deref parsePatListInnerDummy)) (fn v2 =>
+                return_node (#node v2) [ annot_add v2 ])))
+              (fn v1 =>
+              bind (keyword 14) (fn v2 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
         in either
-        [ parseList
-        , parseRecord
-        , parseTuple
-        , parseParens
-        , parseOpCon
-        , parseVar
-        , parseOpVar
+        [ parseConst
         , parseWildcard
-        , parseConst
+        , parseOpVar
+        , parseVar
+        , parseOpCon
+        , parseParens
+        , parseTuple
+        , parseRecord
+        , parseList
         ]
         end)
   
         val parseLevel5 = fix (fn parseLevel5 =>
         let
-          val parseLayered =
-            create PatLayered (
-              bind (parseTerminalId) (fn v0 =>
-              bind (optionalLongest (
-                bind (
-                  bind (keyword 8) (fn v3 =>
-                  bind (parseNonterminal (deref parseTypDummy)) (fn v4 =>
-                  return_node (#node v4) [ annot_add v3 , annot_add v4 ])))
-                (fn v2 =>
-                return_node (#node v2) [ annot_add v2 ])))
-              (fn v1 =>
-              bind (keyword 19) (fn v2 =>
-              bind (parseNonterminal parseLevel5) (fn v3 =>
-              return_node ((#node v0) , (#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+          val parseCon =
+            create PatCon (
+              bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
+              bind (parseNonterminal parseLevel5) (fn v1 =>
+              return_node ((#node v0) , (#node v1)) [ annot_add v0 , annot_add v1 ])))
+  
+          val parseAnnot =
+            create PatAnnot (
+              bind (parseNonterminal parseLevel5) (fn v0 =>
+              bind (keyword 8) (fn v1 =>
+              bind (parseNonterminal (deref parseTypDummy)) (fn v2 =>
+              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseOpLayered =
             create PatOpLayered (
@@ -1163,30 +1171,32 @@ struct
               bind (parseNonterminal parseLevel5) (fn v4 =>
               return_node ((#node v1) , (#node v2) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
-          val parseAnnot =
-            create PatAnnot (
-              bind (parseNonterminal parseLevel5) (fn v0 =>
-              bind (keyword 8) (fn v1 =>
-              bind (parseNonterminal (deref parseTypDummy)) (fn v2 =>
-              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
-          val parseCon =
-            create PatCon (
-              bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
-              bind (parseNonterminal parseLevel5) (fn v1 =>
-              return_node ((#node v0) , (#node v1)) [ annot_add v0 , annot_add v1 ])))
+          val parseLayered =
+            create PatLayered (
+              bind (parseTerminalId) (fn v0 =>
+              bind (optionalLongest (
+                bind (
+                  bind (keyword 8) (fn v3 =>
+                  bind (parseNonterminal (deref parseTypDummy)) (fn v4 =>
+                  return_node (#node v4) [ annot_add v3 , annot_add v4 ])))
+                (fn v2 =>
+                return_node (#node v2) [ annot_add v2 ])))
+              (fn v1 =>
+              bind (keyword 19) (fn v2 =>
+              bind (parseNonterminal parseLevel5) (fn v3 =>
+              return_node ((#node v0) , (#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
         in either
         [ (forget parseAtom)
-        , parseLayered
-        , parseOpLayered
-        , parseAnnot
         , parseCon
+        , parseAnnot
+        , parseOpLayered
+        , parseLayered
         ]
         end)
   
       in
-        forget parseLevel5
+        longest (forget parseLevel5)
       end
   
     (* PatListInner *)
@@ -1213,7 +1223,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* PatRow *)
@@ -1221,6 +1231,26 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
+          val parseWildcard =
+            create (fn () => PatRowWildcard) (
+              bind (keyword 7) (fn v0 =>
+              return_node () [ annot_add v0 ]))
+  
+          val parsePat =
+            create PatRowPat (
+              bind (parseNonterminal (deref parseLabDummy)) (fn v0 =>
+              bind (keyword 11) (fn v1 =>
+              bind (parseNonterminal (deref parsePatDummy)) (fn v2 =>
+              bind (optionalLongest (
+                bind (
+                  bind (keyword 4) (fn v5 =>
+                  bind (parseNonterminal (deref parsePatRowDummy)) (fn v6 =>
+                  return_node (#node v6) [ annot_add v5 , annot_add v6 ])))
+                (fn v4 =>
+                return_node (#node v4) [ annot_add v4 ])))
+              (fn v3 =>
+              return_node ((#node v0) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+  
           val parseVar =
             create PatRowVar (
               bind (parseTerminalId) (fn v0 =>
@@ -1250,66 +1280,29 @@ struct
               (fn v3 =>
               return_node ((#node v0) , (#node v1) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
-          val parsePat =
-            create PatRowPat (
-              bind (parseNonterminal (deref parseLabDummy)) (fn v0 =>
-              bind (keyword 11) (fn v1 =>
-              bind (parseNonterminal (deref parsePatDummy)) (fn v2 =>
-              bind (optionalLongest (
-                bind (
-                  bind (keyword 4) (fn v5 =>
-                  bind (parseNonterminal (deref parsePatRowDummy)) (fn v6 =>
-                  return_node (#node v6) [ annot_add v5 , annot_add v6 ])))
-                (fn v4 =>
-                return_node (#node v4) [ annot_add v4 ])))
-              (fn v3 =>
-              return_node ((#node v0) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
-  
-          val parseWildcard =
-            create (fn () => PatRowWildcard) (
-              bind (keyword 7) (fn v0 =>
-              return_node () [ annot_add v0 ]))
-  
         in either
-        [ parseVar
+        [ parseWildcard
         , parsePat
-        , parseWildcard
+        , parseVar
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
-    (* TypNoStar *)
-    val parseTypNoStar =
+    (* AtomTyp *)
+    val parseAtomTyp =
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseRecord =
-            create TypNoStarRecord (
-              bind (keyword 57) (fn v0 =>
-              bind (optionalLongest (
-                bind (parseNonterminal (deref parseTypRowDummy)) (fn v2 =>
-                return_node (#node v2) [ annot_add v2 ])))
-              (fn v1 =>
-              bind (keyword 59) (fn v2 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
-          val parseParens =
-            create TypNoStarParens (
-              bind (keyword 1) (fn v0 =>
-              bind (parseNonterminal (deref parseTypDummy)) (fn v1 =>
-              bind (keyword 2) (fn v2 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
-          val parseCon =
-            create TypNoStarCon (
-              bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
+          val parseVar =
+            create AtomTypVar (
+              bind (parseTerminalTyvar) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseConAppMulti =
-            create TypNoStarConAppMulti (
+            create AtomTypConAppMulti (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parseTypDummy)) (fn v1 =>
               bind (keyword 4) (fn v2 =>
@@ -1326,24 +1319,41 @@ struct
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v6 =>
               return_node ((#node v1) , (#node v3) , (#node v4) , (#node v6)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 ]))))))))
   
-          val parseVar =
-            create TypNoStarVar (
-              bind (parseTerminalTyvar) (fn v0 =>
+          val parseCon =
+            create AtomTypCon (
+              bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
+          val parseParens =
+            create AtomTypParens (
+              bind (keyword 1) (fn v0 =>
+              bind (parseNonterminal (deref parseTypDummy)) (fn v1 =>
+              bind (keyword 2) (fn v2 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+  
+          val parseRecord =
+            create AtomTypRecord (
+              bind (keyword 57) (fn v0 =>
+              bind (optionalLongest (
+                bind (parseNonterminal (deref parseTypRowDummy)) (fn v2 =>
+                return_node (#node v2) [ annot_add v2 ])))
+              (fn v1 =>
+              bind (keyword 59) (fn v2 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+  
         in either
-        [ parseRecord
-        , parseParens
-        , parseCon
+        [ parseVar
         , parseConAppMulti
-        , parseVar
+        , parseCon
+        , parseParens
+        , parseRecord
         ]
         end)
   
         val parseLevel1 = fix (fn parseLevel1 =>
         let
           val parseConApp =
-            create TypNoStarConApp (
+            create AtomTypConApp (
               bind (parseNonterminal parseLevel1) (fn v0 =>
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
               return_node ((#node v0) , (#node v1)) [ annot_add v0 , annot_add v1 ])))
@@ -1355,7 +1365,7 @@ struct
         end)
   
       in
-        forget parseLevel1
+        longest (forget parseLevel1)
       end
   
     (* Typ *)
@@ -1363,27 +1373,27 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
+          val parseInner =
+            create TypInner (
+              bind (parseNonterminal (deref parseAtomTypDummy)) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
           val parseTupleTyp =
             create TypTupleTyp (
-              bind (parseNonterminal (deref parseTypNoStarDummy)) (fn v0 =>
+              bind (parseNonterminal (deref parseAtomTypDummy)) (fn v0 =>
               bind (plusLongest (
                 bind (
                   bind (keyword 3) (fn v3 =>
-                  bind (parseNonterminal (deref parseTypNoStarDummy)) (fn v4 =>
+                  bind (parseNonterminal (deref parseAtomTypDummy)) (fn v4 =>
                   return_node (#node v4) [ annot_add v3 , annot_add v4 ])))
                 (fn v2 =>
                 return_node (#node v2) [ annot_add v2 ])))
               (fn v1 =>
               return_node ((#node v0) , (#node v1)) [ annot_add v0 , annot_add v1 ])))
   
-          val parseInner =
-            create TypInner (
-              bind (parseNonterminal (deref parseTypNoStarDummy)) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
-  
         in either
-        [ parseTupleTyp
-        , parseInner
+        [ parseInner
+        , parseTupleTyp
         ]
         end)
   
@@ -1403,7 +1413,7 @@ struct
         end)
   
       in
-        forget parseLevel1
+        longest (forget parseLevel1)
       end
   
     (* TypRow *)
@@ -1434,7 +1444,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Dec *)
@@ -1442,79 +1452,48 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseInfixr =
-            create DecInfixr (
-              bind (keyword 35) (fn v0 =>
-              bind (optionalLongest (
-                bind (parseTerminalInt) (fn v2 =>
-                return_node (#node v2) [ annot_add v2 ])))
-              (fn v1 =>
-              bind (parseTerminalId) (fn v2 =>
-              bind (starLongest (
-                bind (parseTerminalId) (fn v4 =>
-                return_node (#node v4) [ annot_add v4 ])))
-              (fn v3 =>
-              return_node ((#node v1) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+          val parseVal =
+            create DecVal (
+              bind (keyword 52) (fn v0 =>
+              bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v1 =>
+              bind (parseNonterminal (deref parseValBindDummy)) (fn v2 =>
+              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
-          val parseInfix =
-            create DecInfix (
-              bind (keyword 34) (fn v0 =>
-              bind (optionalLongest (
-                bind (parseTerminalInt) (fn v2 =>
-                return_node (#node v2) [ annot_add v2 ])))
-              (fn v1 =>
-              bind (parseTerminalId) (fn v2 =>
-              bind (starLongest (
-                bind (parseTerminalId) (fn v4 =>
-                return_node (#node v4) [ annot_add v4 ])))
-              (fn v3 =>
-              return_node ((#node v1) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+          val parseFun =
+            create DecFun (
+              bind (keyword 28) (fn v0 =>
+              bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v1 =>
+              bind (parseNonterminal (deref parseFunBindDummy)) (fn v2 =>
+              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
-          val parseNonfix =
-            create DecNonfix (
-              bind (keyword 38) (fn v0 =>
+          val parseType =
+            create DecType (
+              bind (keyword 51) (fn v0 =>
+              bind (parseNonterminal (deref parseTypBindDummy)) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+  
+          val parseDatatype =
+            create DecDatatype (
+              bind (keyword 21) (fn v0 =>
+              bind (parseNonterminal (deref parseDatBindDummy)) (fn v1 =>
+              bind (optionalLongest (
+                bind (
+                  bind (keyword 56) (fn v4 =>
+                  bind (parseNonterminal (deref parseTypBindDummy)) (fn v5 =>
+                  return_node (#node v5) [ annot_add v4 , annot_add v5 ])))
+                (fn v3 =>
+                return_node (#node v3) [ annot_add v3 ])))
+              (fn v2 =>
+              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+  
+          val parseDatatypeRepl =
+            create DecDatatypeRepl (
+              bind (keyword 21) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
-              bind (starLongest (
-                bind (parseTerminalId) (fn v3 =>
-                return_node (#node v3) [ annot_add v3 ])))
-              (fn v2 =>
-              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
-          val parseOpen =
-            create DecOpen (
-              bind (keyword 41) (fn v0 =>
-              bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
-              bind (starLongest (
-                bind (parseNonterminal (deref parseLongIdDummy)) (fn v3 =>
-                return_node (#node v3) [ annot_add v3 ])))
-              (fn v2 =>
-              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
-          val parseLocal =
-            create DecLocal (
-              bind (keyword 37) (fn v0 =>
-              bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
-              bind (keyword 32) (fn v2 =>
-              bind (parseNonterminal (deref parseDecListDummy)) (fn v3 =>
-              bind (keyword 24) (fn v4 =>
-              return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
-  
-          val parseSemicolon =
-            create (fn () => DecSemicolon) (
-              bind (keyword 10) (fn v0 =>
-              return_node () [ annot_add v0 ]))
-  
-          val parseStructure =
-            create DecStructure (
-              bind (keyword 49) (fn v0 =>
-              bind (parseNonterminal (deref parseStrBindDummy)) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
-  
-          val parseException =
-            create DecException (
-              bind (keyword 26) (fn v0 =>
-              bind (parseNonterminal (deref parseExnBindDummy)) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+              bind (keyword 11) (fn v2 =>
+              bind (keyword 21) (fn v3 =>
+              bind (parseNonterminal (deref parseLongIdDummy)) (fn v4 =>
+              return_node ((#node v1) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
           val parseAbstype =
             create DecAbstype (
@@ -1533,69 +1512,100 @@ struct
               bind (keyword 24) (fn v5 =>
               return_node ((#node v1) , (#node v2) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
   
-          val parseDatatypeRepl =
-            create DecDatatypeRepl (
-              bind (keyword 21) (fn v0 =>
-              bind (parseTerminalId) (fn v1 =>
-              bind (keyword 11) (fn v2 =>
-              bind (keyword 21) (fn v3 =>
-              bind (parseNonterminal (deref parseLongIdDummy)) (fn v4 =>
-              return_node ((#node v1) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
+          val parseException =
+            create DecException (
+              bind (keyword 26) (fn v0 =>
+              bind (parseNonterminal (deref parseExnBindDummy)) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
-          val parseDatatype =
-            create DecDatatype (
-              bind (keyword 21) (fn v0 =>
-              bind (parseNonterminal (deref parseDatBindDummy)) (fn v1 =>
-              bind (optionalLongest (
-                bind (
-                  bind (keyword 56) (fn v4 =>
-                  bind (parseNonterminal (deref parseTypBindDummy)) (fn v5 =>
-                  return_node (#node v5) [ annot_add v4 , annot_add v5 ])))
-                (fn v3 =>
+          val parseStructure =
+            create DecStructure (
+              bind (keyword 49) (fn v0 =>
+              bind (parseNonterminal (deref parseStrBindDummy)) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+  
+          val parseSemicolon =
+            create (fn () => DecSemicolon) (
+              bind (keyword 10) (fn v0 =>
+              return_node () [ annot_add v0 ]))
+  
+          val parseLocal =
+            create DecLocal (
+              bind (keyword 37) (fn v0 =>
+              bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
+              bind (keyword 32) (fn v2 =>
+              bind (parseNonterminal (deref parseDecListDummy)) (fn v3 =>
+              bind (keyword 24) (fn v4 =>
+              return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
+  
+          val parseOpen =
+            create DecOpen (
+              bind (keyword 41) (fn v0 =>
+              bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
+              bind (starLongest (
+                bind (parseNonterminal (deref parseLongIdDummy)) (fn v3 =>
                 return_node (#node v3) [ annot_add v3 ])))
               (fn v2 =>
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
-          val parseType =
-            create DecType (
-              bind (keyword 51) (fn v0 =>
-              bind (parseNonterminal (deref parseTypBindDummy)) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
-  
-          val parseFun =
-            create DecFun (
-              bind (keyword 28) (fn v0 =>
-              bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v1 =>
-              bind (parseNonterminal (deref parseFunBindDummy)) (fn v2 =>
+          val parseNonfix =
+            create DecNonfix (
+              bind (keyword 38) (fn v0 =>
+              bind (parseTerminalId) (fn v1 =>
+              bind (starLongest (
+                bind (parseTerminalId) (fn v3 =>
+                return_node (#node v3) [ annot_add v3 ])))
+              (fn v2 =>
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
-          val parseVal =
-            create DecVal (
-              bind (keyword 52) (fn v0 =>
-              bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v1 =>
-              bind (parseNonterminal (deref parseValBindDummy)) (fn v2 =>
-              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+          val parseInfix =
+            create DecInfix (
+              bind (keyword 34) (fn v0 =>
+              bind (optionalLongest (
+                bind (parseTerminalInt) (fn v2 =>
+                return_node (#node v2) [ annot_add v2 ])))
+              (fn v1 =>
+              bind (parseTerminalId) (fn v2 =>
+              bind (starLongest (
+                bind (parseTerminalId) (fn v4 =>
+                return_node (#node v4) [ annot_add v4 ])))
+              (fn v3 =>
+              return_node ((#node v1) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+  
+          val parseInfixr =
+            create DecInfixr (
+              bind (keyword 35) (fn v0 =>
+              bind (optionalLongest (
+                bind (parseTerminalInt) (fn v2 =>
+                return_node (#node v2) [ annot_add v2 ])))
+              (fn v1 =>
+              bind (parseTerminalId) (fn v2 =>
+              bind (starLongest (
+                bind (parseTerminalId) (fn v4 =>
+                return_node (#node v4) [ annot_add v4 ])))
+              (fn v3 =>
+              return_node ((#node v1) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
         in either
-        [ parseInfixr
-        , parseInfix
-        , parseNonfix
-        , parseOpen
-        , parseLocal
-        , parseSemicolon
-        , parseStructure
-        , parseException
-        , parseAbstype
-        , parseDatatypeRepl
-        , parseDatatype
-        , parseType
+        [ parseVal
         , parseFun
-        , parseVal
+        , parseType
+        , parseDatatype
+        , parseDatatypeRepl
+        , parseAbstype
+        , parseException
+        , parseStructure
+        , parseSemicolon
+        , parseLocal
+        , parseOpen
+        , parseNonfix
+        , parseInfix
+        , parseInfixr
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* DecList *)
@@ -1617,7 +1627,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* TyVarSeq *)
@@ -1625,9 +1635,10 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseEmpty =
-            create (fn () => TyVarSeqEmpty) (
-              empty ())
+          val parseOne =
+            create TyVarSeqOne (
+              bind (parseTerminalTyvar) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
   
           val parseMany =
             create TyVarSeqMany (
@@ -1644,20 +1655,19 @@ struct
               bind (keyword 2) (fn v3 =>
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
-          val parseOne =
-            create TyVarSeqOne (
-              bind (parseTerminalTyvar) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
+          val parseEmpty =
+            create (fn () => TyVarSeqEmpty) (
+              empty ())
   
         in either
-        [ parseEmpty
+        [ parseOne
         , parseMany
-        , parseOne
+        , parseEmpty
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* ValBind *)
@@ -1700,7 +1710,7 @@ struct
         end)
   
       in
-        forget parseLevel5
+        longest (forget parseLevel5)
       end
   
     (* FunBind *)
@@ -1727,7 +1737,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* FunMatch *)
@@ -1735,62 +1745,6 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseInfixParen =
-            create FunMatchInfixParen (
-              bind (keyword 1) (fn v0 =>
-              bind (parseNonterminal (deref parsePatDummy)) (fn v1 =>
-              bind (parseTerminalId) (fn v2 =>
-              bind (parseNonterminal (deref parsePatDummy)) (fn v3 =>
-              bind (keyword 2) (fn v4 =>
-              bind (starLongest (
-                bind (parseNonterminal (deref parsePatDummy)) (fn v6 =>
-                return_node (#node v6) [ annot_add v6 ])))
-              (fn v5 =>
-              bind (optionalLongest (
-                bind (
-                  bind (keyword 8) (fn v8 =>
-                  bind (parseNonterminal (deref parseTypDummy)) (fn v9 =>
-                  return_node (#node v9) [ annot_add v8 , annot_add v9 ])))
-                (fn v7 =>
-                return_node (#node v7) [ annot_add v7 ])))
-              (fn v6 =>
-              bind (keyword 11) (fn v7 =>
-              bind (parseNonterminal (deref parseExpDummy)) (fn v8 =>
-              bind (optionalLongest (
-                bind (
-                  bind (keyword 58) (fn v11 =>
-                  bind (parseNonterminal (deref parseFunMatchDummy)) (fn v12 =>
-                  return_node (#node v12) [ annot_add v11 , annot_add v12 ])))
-                (fn v10 =>
-                return_node (#node v10) [ annot_add v10 ])))
-              (fn v9 =>
-              return_node ((#node v1) , (#node v2) , (#node v3) , (#node v5) , (#node v6) , (#node v8) , (#node v9)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 , annot_add v7 , annot_add v8 , annot_add v9 ])))))))))))
-  
-          val parseInfix =
-            create FunMatchInfix (
-              bind (parseNonterminal (deref parsePatDummy)) (fn v0 =>
-              bind (parseTerminalId) (fn v1 =>
-              bind (parseNonterminal (deref parsePatDummy)) (fn v2 =>
-              bind (optionalLongest (
-                bind (
-                  bind (keyword 8) (fn v5 =>
-                  bind (parseNonterminal (deref parseTypDummy)) (fn v6 =>
-                  return_node (#node v6) [ annot_add v5 , annot_add v6 ])))
-                (fn v4 =>
-                return_node (#node v4) [ annot_add v4 ])))
-              (fn v3 =>
-              bind (keyword 11) (fn v4 =>
-              bind (parseNonterminal (deref parseExpDummy)) (fn v5 =>
-              bind (optionalLongest (
-                bind (
-                  bind (keyword 58) (fn v8 =>
-                  bind (parseNonterminal (deref parseFunMatchDummy)) (fn v9 =>
-                  return_node (#node v9) [ annot_add v8 , annot_add v9 ])))
-                (fn v7 =>
-                return_node (#node v7) [ annot_add v7 ])))
-              (fn v6 =>
-              return_node ((#node v0) , (#node v1) , (#node v2) , (#node v3) , (#node v5) , (#node v6)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 ]))))))))
-  
           val parseNonfix =
             create FunMatchNonfix (
               bind (optionalLongest (
@@ -1823,15 +1777,71 @@ struct
               (fn v7 =>
               return_node ((#node v1) , (#node v2) , (#node v3) , (#node v4) , (#node v6) , (#node v7)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 , annot_add v7 ])))))))))
   
+          val parseInfix =
+            create FunMatchInfix (
+              bind (parseNonterminal (deref parsePatDummy)) (fn v0 =>
+              bind (parseTerminalId) (fn v1 =>
+              bind (parseNonterminal (deref parsePatDummy)) (fn v2 =>
+              bind (optionalLongest (
+                bind (
+                  bind (keyword 8) (fn v5 =>
+                  bind (parseNonterminal (deref parseTypDummy)) (fn v6 =>
+                  return_node (#node v6) [ annot_add v5 , annot_add v6 ])))
+                (fn v4 =>
+                return_node (#node v4) [ annot_add v4 ])))
+              (fn v3 =>
+              bind (keyword 11) (fn v4 =>
+              bind (parseNonterminal (deref parseExpDummy)) (fn v5 =>
+              bind (optionalLongest (
+                bind (
+                  bind (keyword 58) (fn v8 =>
+                  bind (parseNonterminal (deref parseFunMatchDummy)) (fn v9 =>
+                  return_node (#node v9) [ annot_add v8 , annot_add v9 ])))
+                (fn v7 =>
+                return_node (#node v7) [ annot_add v7 ])))
+              (fn v6 =>
+              return_node ((#node v0) , (#node v1) , (#node v2) , (#node v3) , (#node v5) , (#node v6)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 ]))))))))
+  
+          val parseInfixParen =
+            create FunMatchInfixParen (
+              bind (keyword 1) (fn v0 =>
+              bind (parseNonterminal (deref parsePatDummy)) (fn v1 =>
+              bind (parseTerminalId) (fn v2 =>
+              bind (parseNonterminal (deref parsePatDummy)) (fn v3 =>
+              bind (keyword 2) (fn v4 =>
+              bind (starLongest (
+                bind (parseNonterminal (deref parsePatDummy)) (fn v6 =>
+                return_node (#node v6) [ annot_add v6 ])))
+              (fn v5 =>
+              bind (optionalLongest (
+                bind (
+                  bind (keyword 8) (fn v8 =>
+                  bind (parseNonterminal (deref parseTypDummy)) (fn v9 =>
+                  return_node (#node v9) [ annot_add v8 , annot_add v9 ])))
+                (fn v7 =>
+                return_node (#node v7) [ annot_add v7 ])))
+              (fn v6 =>
+              bind (keyword 11) (fn v7 =>
+              bind (parseNonterminal (deref parseExpDummy)) (fn v8 =>
+              bind (optionalLongest (
+                bind (
+                  bind (keyword 58) (fn v11 =>
+                  bind (parseNonterminal (deref parseFunMatchDummy)) (fn v12 =>
+                  return_node (#node v12) [ annot_add v11 , annot_add v12 ])))
+                (fn v10 =>
+                return_node (#node v10) [ annot_add v10 ])))
+              (fn v9 =>
+              return_node ((#node v1) , (#node v2) , (#node v3) , (#node v5) , (#node v6) , (#node v8) , (#node v9)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 , annot_add v7 , annot_add v8 , annot_add v9 ])))))))))))
+  
         in either
-        [ parseInfixParen
+        [ parseNonfix
         , parseInfix
-        , parseNonfix
+        , parseInfixParen
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* TypBind *)
@@ -1861,7 +1871,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* DatBind *)
@@ -1891,7 +1901,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* ConBind *)
@@ -1926,7 +1936,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* ExnBind *)
@@ -1934,21 +1944,6 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseRepl =
-            create ExnBindRepl (
-              bind (parseTerminalId) (fn v0 =>
-              bind (keyword 11) (fn v1 =>
-              bind (parseNonterminal (deref parseLongIdDummy)) (fn v2 =>
-              bind (optionalLongest (
-                bind (
-                  bind (keyword 17) (fn v5 =>
-                  bind (parseNonterminal (deref parseExnBindDummy)) (fn v6 =>
-                  return_node (#node v6) [ annot_add v5 , annot_add v6 ])))
-                (fn v4 =>
-                return_node (#node v4) [ annot_add v4 ])))
-              (fn v3 =>
-              return_node ((#node v0) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
-  
           val parseGen =
             create ExnBindGen (
               bind (parseTerminalId) (fn v0 =>
@@ -1970,14 +1965,29 @@ struct
               (fn v2 =>
               return_node ((#node v0) , (#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
+          val parseRepl =
+            create ExnBindRepl (
+              bind (parseTerminalId) (fn v0 =>
+              bind (keyword 11) (fn v1 =>
+              bind (parseNonterminal (deref parseLongIdDummy)) (fn v2 =>
+              bind (optionalLongest (
+                bind (
+                  bind (keyword 17) (fn v5 =>
+                  bind (parseNonterminal (deref parseExnBindDummy)) (fn v6 =>
+                  return_node (#node v6) [ annot_add v5 , annot_add v6 ])))
+                (fn v4 =>
+                return_node (#node v4) [ annot_add v4 ])))
+              (fn v3 =>
+              return_node ((#node v0) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+  
         in either
-        [ parseRepl
-        , parseGen
+        [ parseGen
+        , parseRepl
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Str *)
@@ -1985,22 +1995,17 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseLet =
-            create StrLet (
-              bind (keyword 36) (fn v0 =>
-              bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
-              bind (keyword 32) (fn v2 =>
-              bind (parseNonterminal (deref parseStrDummy)) (fn v3 =>
-              bind (keyword 24) (fn v4 =>
-              return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
+          val parseId =
+            create StrId (
+              bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
   
-          val parseFctAppDec =
-            create StrFctAppDec (
-              bind (parseTerminalId) (fn v0 =>
-              bind (keyword 1) (fn v1 =>
-              bind (parseNonterminal (deref parseDecListDummy)) (fn v2 =>
-              bind (keyword 2) (fn v3 =>
-              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+          val parseStruct =
+            create StrStruct (
+              bind (keyword 48) (fn v0 =>
+              bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
+              bind (keyword 24) (fn v2 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseFctApp =
             create StrFctApp (
@@ -2010,36 +2015,34 @@ struct
               bind (keyword 2) (fn v3 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
-          val parseStruct =
-            create StrStruct (
-              bind (keyword 48) (fn v0 =>
-              bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
-              bind (keyword 24) (fn v2 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+          val parseFctAppDec =
+            create StrFctAppDec (
+              bind (parseTerminalId) (fn v0 =>
+              bind (keyword 1) (fn v1 =>
+              bind (parseNonterminal (deref parseDecListDummy)) (fn v2 =>
+              bind (keyword 2) (fn v3 =>
+              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
-          val parseId =
-            create StrId (
-              bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
+          val parseLet =
+            create StrLet (
+              bind (keyword 36) (fn v0 =>
+              bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
+              bind (keyword 32) (fn v2 =>
+              bind (parseNonterminal (deref parseStrDummy)) (fn v3 =>
+              bind (keyword 24) (fn v4 =>
+              return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
         in either
-        [ parseLet
-        , parseFctAppDec
-        , parseFctApp
+        [ parseId
         , parseStruct
-        , parseId
+        , parseFctApp
+        , parseFctAppDec
+        , parseLet
         ]
         end)
   
         val parseLevel1 = fix (fn parseLevel1 =>
         let
-          val parseOpaque =
-            create StrOpaque (
-              bind (parseNonterminal parseLevel1) (fn v0 =>
-              bind (keyword 9) (fn v1 =>
-              bind (parseNonterminal (deref parseSigExpDummy)) (fn v2 =>
-              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
           val parseTransparent =
             create StrTransparent (
               bind (parseNonterminal parseLevel1) (fn v0 =>
@@ -2047,15 +2050,22 @@ struct
               bind (parseNonterminal (deref parseSigExpDummy)) (fn v2 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
+          val parseOpaque =
+            create StrOpaque (
+              bind (parseNonterminal parseLevel1) (fn v0 =>
+              bind (keyword 9) (fn v1 =>
+              bind (parseNonterminal (deref parseSigExpDummy)) (fn v2 =>
+              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+  
         in either
         [ (forget parseAtom)
-        , parseOpaque
         , parseTransparent
+        , parseOpaque
         ]
         end)
   
       in
-        forget parseLevel1
+        longest (forget parseLevel1)
       end
   
     (* StrBind *)
@@ -2088,7 +2098,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* SigAnnot *)
@@ -2096,26 +2106,26 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseOpaque =
-            create SigAnnotOpaque (
-              bind (keyword 9) (fn v0 =>
-              bind (parseNonterminal (deref parseSigExpDummy)) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
-  
           val parseTransparent =
             create SigAnnotTransparent (
               bind (keyword 8) (fn v0 =>
               bind (parseNonterminal (deref parseSigExpDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
+          val parseOpaque =
+            create SigAnnotOpaque (
+              bind (keyword 9) (fn v0 =>
+              bind (parseNonterminal (deref parseSigExpDummy)) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+  
         in either
-        [ parseOpaque
-        , parseTransparent
+        [ parseTransparent
+        , parseOpaque
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* SigExp *)
@@ -2123,6 +2133,11 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
+          val parseId =
+            create SigExpId (
+              bind (parseTerminalId) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
           val parseSig =
             create SigExpSig (
               bind (keyword 46) (fn v0 =>
@@ -2130,14 +2145,9 @@ struct
               bind (keyword 24) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
-          val parseId =
-            create SigExpId (
-              bind (parseTerminalId) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
-  
         in either
-        [ parseSig
-        , parseId
+        [ parseId
+        , parseSig
         ]
         end)
   
@@ -2158,7 +2168,7 @@ struct
         end)
   
       in
-        forget parseLevel1
+        longest (forget parseLevel1)
       end
   
     (* TypRefin *)
@@ -2189,7 +2199,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Spec *)
@@ -2197,37 +2207,34 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseIncludeMulti =
-            create SpecIncludeMulti (
-              bind (keyword 33) (fn v0 =>
-              bind (parseTerminalId) (fn v1 =>
-              bind (starLongest (
-                bind (parseTerminalId) (fn v3 =>
-                return_node (#node v3) [ annot_add v3 ])))
-              (fn v2 =>
-              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
-          val parseInclude =
-            create SpecInclude (
-              bind (keyword 33) (fn v0 =>
-              bind (parseNonterminal (deref parseSigExpDummy)) (fn v1 =>
+          val parseVal =
+            create SpecVal (
+              bind (keyword 52) (fn v0 =>
+              bind (parseNonterminal (deref parseValDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
-          val parseSemicolon =
-            create (fn () => SpecSemicolon) (
-              bind (keyword 10) (fn v0 =>
-              return_node () [ annot_add v0 ]))
-  
-          val parseStructure =
-            create SpecStructure (
-              bind (keyword 49) (fn v0 =>
-              bind (parseNonterminal (deref parseStrDescDummy)) (fn v1 =>
+          val parseType =
+            create SpecType (
+              bind (keyword 51) (fn v0 =>
+              bind (parseNonterminal (deref parseTypDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
-          val parseException =
-            create SpecException (
-              bind (keyword 26) (fn v0 =>
-              bind (parseNonterminal (deref parseExnDescDummy)) (fn v1 =>
+          val parseEqtype =
+            create SpecEqtype (
+              bind (keyword 25) (fn v0 =>
+              bind (parseNonterminal (deref parseTypDescDummy)) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+  
+          val parseTypeAbbrev =
+            create SpecTypeAbbrev (
+              bind (keyword 51) (fn v0 =>
+              bind (parseNonterminal (deref parseTypBindDummy)) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+  
+          val parseDatatype =
+            create SpecDatatype (
+              bind (keyword 21) (fn v0 =>
+              bind (parseNonterminal (deref parseDatDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseDatatypeRepl =
@@ -2239,68 +2246,56 @@ struct
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v4 =>
               return_node ((#node v1) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
-          val parseDatatype =
-            create SpecDatatype (
-              bind (keyword 21) (fn v0 =>
-              bind (parseNonterminal (deref parseDatDescDummy)) (fn v1 =>
+          val parseException =
+            create SpecException (
+              bind (keyword 26) (fn v0 =>
+              bind (parseNonterminal (deref parseExnDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
-          val parseTypeAbbrev =
-            create SpecTypeAbbrev (
-              bind (keyword 51) (fn v0 =>
-              bind (parseNonterminal (deref parseTypBindDummy)) (fn v1 =>
+          val parseStructure =
+            create SpecStructure (
+              bind (keyword 49) (fn v0 =>
+              bind (parseNonterminal (deref parseStrDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
-          val parseEqtype =
-            create SpecEqtype (
-              bind (keyword 25) (fn v0 =>
-              bind (parseNonterminal (deref parseTypDescDummy)) (fn v1 =>
+          val parseSemicolon =
+            create (fn () => SpecSemicolon) (
+              bind (keyword 10) (fn v0 =>
+              return_node () [ annot_add v0 ]))
+  
+          val parseInclude =
+            create SpecInclude (
+              bind (keyword 33) (fn v0 =>
+              bind (parseNonterminal (deref parseSigExpDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
-          val parseType =
-            create SpecType (
-              bind (keyword 51) (fn v0 =>
-              bind (parseNonterminal (deref parseTypDescDummy)) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
-  
-          val parseVal =
-            create SpecVal (
-              bind (keyword 52) (fn v0 =>
-              bind (parseNonterminal (deref parseValDescDummy)) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+          val parseIncludeMulti =
+            create SpecIncludeMulti (
+              bind (keyword 33) (fn v0 =>
+              bind (parseTerminalId) (fn v1 =>
+              bind (starLongest (
+                bind (parseTerminalId) (fn v3 =>
+                return_node (#node v3) [ annot_add v3 ])))
+              (fn v2 =>
+              return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
         in either
-        [ parseIncludeMulti
-        , parseInclude
-        , parseSemicolon
-        , parseStructure
-        , parseException
-        , parseDatatypeRepl
-        , parseDatatype
-        , parseTypeAbbrev
-        , parseEqtype
+        [ parseVal
         , parseType
-        , parseVal
+        , parseEqtype
+        , parseTypeAbbrev
+        , parseDatatype
+        , parseDatatypeRepl
+        , parseException
+        , parseStructure
+        , parseSemicolon
+        , parseInclude
+        , parseIncludeMulti
         ]
         end)
   
         val parseLevel1 = fix (fn parseLevel1 =>
         let
-          val parseSharing =
-            create SpecSharing (
-              bind (parseNonterminal parseLevel1) (fn v0 =>
-              bind (keyword 45) (fn v1 =>
-              bind (parseNonterminal (deref parseLongIdDummy)) (fn v2 =>
-              bind (plusLongest (
-                bind (
-                  bind (keyword 11) (fn v5 =>
-                  bind (parseNonterminal (deref parseLongIdDummy)) (fn v6 =>
-                  return_node (#node v6) [ annot_add v5 , annot_add v6 ])))
-                (fn v4 =>
-                return_node (#node v4) [ annot_add v4 ])))
-              (fn v3 =>
-              return_node ((#node v0) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
-  
           val parseSharingType =
             create SpecSharingType (
               bind (parseNonterminal parseLevel1) (fn v0 =>
@@ -2317,15 +2312,30 @@ struct
               (fn v4 =>
               return_node ((#node v0) , (#node v3) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
+          val parseSharing =
+            create SpecSharing (
+              bind (parseNonterminal parseLevel1) (fn v0 =>
+              bind (keyword 45) (fn v1 =>
+              bind (parseNonterminal (deref parseLongIdDummy)) (fn v2 =>
+              bind (plusLongest (
+                bind (
+                  bind (keyword 11) (fn v5 =>
+                  bind (parseNonterminal (deref parseLongIdDummy)) (fn v6 =>
+                  return_node (#node v6) [ annot_add v5 , annot_add v6 ])))
+                (fn v4 =>
+                return_node (#node v4) [ annot_add v4 ])))
+              (fn v3 =>
+              return_node ((#node v0) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+  
         in either
         [ (forget parseAtom)
-        , parseSharing
         , parseSharingType
+        , parseSharing
         ]
         end)
   
       in
-        forget parseLevel1
+        longest (forget parseLevel1)
       end
   
     (* SpecList *)
@@ -2347,7 +2357,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* ValDesc *)
@@ -2376,7 +2386,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* TypDesc *)
@@ -2404,7 +2414,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* DatDesc *)
@@ -2434,7 +2444,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* ConDesc *)
@@ -2469,7 +2479,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* ExnDesc *)
@@ -2504,7 +2514,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* StrDesc *)
@@ -2533,7 +2543,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Prog *)
@@ -2541,16 +2551,10 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseSemicolon =
-            create (fn () => ProgSemicolon) (
-              bind (keyword 10) (fn v0 =>
-              return_node () [ annot_add v0 ]))
-  
-          val parseSignature =
-            create ProgSignature (
-              bind (keyword 47) (fn v0 =>
-              bind (parseNonterminal (deref parseSigBindDummy)) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+          val parseDec =
+            create ProgDec (
+              bind (parseNonterminal (deref parseDecDummy)) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
   
           val parseFunctor =
             create ProgFunctor (
@@ -2558,21 +2562,27 @@ struct
               bind (parseNonterminal (deref parseFctBindDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
-          val parseDec =
-            create ProgDec (
-              bind (parseNonterminal (deref parseDecDummy)) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
+          val parseSignature =
+            create ProgSignature (
+              bind (keyword 47) (fn v0 =>
+              bind (parseNonterminal (deref parseSigBindDummy)) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+  
+          val parseSemicolon =
+            create (fn () => ProgSemicolon) (
+              bind (keyword 10) (fn v0 =>
+              return_node () [ annot_add v0 ]))
   
         in either
-        [ parseSemicolon
-        , parseSignature
+        [ parseDec
         , parseFunctor
-        , parseDec
+        , parseSignature
+        , parseSemicolon
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* ProgList *)
@@ -2594,7 +2604,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* FctBind *)
@@ -2602,28 +2612,6 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseOpened =
-            create FctBindOpened (
-              bind (parseTerminalId) (fn v0 =>
-              bind (keyword 1) (fn v1 =>
-              bind (parseNonterminal (deref parseSpecDummy)) (fn v2 =>
-              bind (keyword 2) (fn v3 =>
-              bind (optionalLongest (
-                bind (parseNonterminal (deref parseSigAnnotDummy)) (fn v5 =>
-                return_node (#node v5) [ annot_add v5 ])))
-              (fn v4 =>
-              bind (keyword 11) (fn v5 =>
-              bind (parseNonterminal (deref parseStrDummy)) (fn v6 =>
-              bind (optionalLongest (
-                bind (
-                  bind (keyword 17) (fn v9 =>
-                  bind (parseNonterminal (deref parseFctBindDummy)) (fn v10 =>
-                  return_node (#node v10) [ annot_add v9 , annot_add v10 ])))
-                (fn v8 =>
-                return_node (#node v8) [ annot_add v8 ])))
-              (fn v7 =>
-              return_node ((#node v0) , (#node v2) , (#node v4) , (#node v6) , (#node v7)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 , annot_add v7 ])))))))))
-  
           val parsePlain =
             create FctBindPlain (
               bind (parseTerminalId) (fn v0 =>
@@ -2648,14 +2636,36 @@ struct
               (fn v9 =>
               return_node ((#node v0) , (#node v2) , (#node v4) , (#node v6) , (#node v8) , (#node v9)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 , annot_add v7 , annot_add v8 , annot_add v9 ])))))))))))
   
+          val parseOpened =
+            create FctBindOpened (
+              bind (parseTerminalId) (fn v0 =>
+              bind (keyword 1) (fn v1 =>
+              bind (parseNonterminal (deref parseSpecDummy)) (fn v2 =>
+              bind (keyword 2) (fn v3 =>
+              bind (optionalLongest (
+                bind (parseNonterminal (deref parseSigAnnotDummy)) (fn v5 =>
+                return_node (#node v5) [ annot_add v5 ])))
+              (fn v4 =>
+              bind (keyword 11) (fn v5 =>
+              bind (parseNonterminal (deref parseStrDummy)) (fn v6 =>
+              bind (optionalLongest (
+                bind (
+                  bind (keyword 17) (fn v9 =>
+                  bind (parseNonterminal (deref parseFctBindDummy)) (fn v10 =>
+                  return_node (#node v10) [ annot_add v9 , annot_add v10 ])))
+                (fn v8 =>
+                return_node (#node v8) [ annot_add v8 ])))
+              (fn v7 =>
+              return_node ((#node v0) , (#node v2) , (#node v4) , (#node v6) , (#node v7)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 , annot_add v7 ])))))))))
+  
         in either
-        [ parseOpened
-        , parsePlain
+        [ parsePlain
+        , parseOpened
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* SigBind *)
@@ -2684,13 +2694,14 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
   
   val () = set parseConDummy parseCon
   val () = set parseLabDummy parseLab
   val () = set parseLongIdDummy parseLongId
+  val () = set parseAtomExpDummy parseAtomExp
   val () = set parseExpDummy parseExp
   val () = set parseExpListInnerDummy parseExpListInner
   val () = set parseExpRowDummy parseExpRow
@@ -2699,7 +2710,7 @@ struct
   val () = set parsePatDummy parsePat
   val () = set parsePatListInnerDummy parsePatListInner
   val () = set parsePatRowDummy parsePatRow
-  val () = set parseTypNoStarDummy parseTypNoStar
+  val () = set parseAtomTypDummy parseAtomTyp
   val () = set parseTypDummy parseTyp
   val () = set parseTypRowDummy parseTypRow
   val () = set parseDecDummy parseDec
@@ -2757,6 +2768,7 @@ sig
   val printCon : Ast.con -> string
   val printLab : Ast.lab -> string
   val printLongId : Ast.long_id -> string
+  val printAtomExp : Ast.atom_exp -> string
   val printExp : Ast.exp -> string
   val printExpListInner : Ast.exp_list_inner -> string
   val printExpRow : Ast.exp_row -> string
@@ -2765,7 +2777,7 @@ sig
   val printPat : Ast.pat -> string
   val printPatListInner : Ast.pat_list_inner -> string
   val printPatRow : Ast.pat_row -> string
-  val printTypNoStar : Ast.typ_no_star -> string
+  val printAtomTyp : Ast.atom_typ -> string
   val printTyp : Ast.typ -> string
   val printTypRow : Ast.typ_row -> string
   val printDec : Ast.dec -> string
@@ -2805,6 +2817,7 @@ sig
   val prettyPrintCon : Ast.con -> string
   val prettyPrintLab : Ast.lab -> string
   val prettyPrintLongId : Ast.long_id -> string
+  val prettyPrintAtomExp : Ast.atom_exp -> string
   val prettyPrintExp : Ast.exp -> string
   val prettyPrintExpListInner : Ast.exp_list_inner -> string
   val prettyPrintExpRow : Ast.exp_row -> string
@@ -2813,7 +2826,7 @@ sig
   val prettyPrintPat : Ast.pat -> string
   val prettyPrintPatListInner : Ast.pat_list_inner -> string
   val prettyPrintPatRow : Ast.pat_row -> string
-  val prettyPrintTypNoStar : Ast.typ_no_star -> string
+  val prettyPrintAtomTyp : Ast.atom_typ -> string
   val prettyPrintTyp : Ast.typ -> string
   val prettyPrintTypRow : Ast.typ_row -> string
   val prettyPrintDec : Ast.dec -> string
@@ -2940,43 +2953,35 @@ end = struct
           ; push buf ")" lineno
           )
   
-  and printExp buf
-    ( { node , span = { start = { lineno , ... } , ... } } : exp ) =
+  and printAtomExp buf
+    ( { node , span = { start = { lineno , ... } , ... } } : atom_exp ) =
     case node of
-        ExpConst v0 =>
-          ( push buf "ExpConst" lineno
+        AtomExpConst v0 =>
+          ( push buf "AtomExpConst" lineno
           ; push buf "(" lineno
           ; printCon buf v0
           ; push buf ")" lineno
           )
-      | ExpOpId v0 =>
-          ( push buf "ExpOpId" lineno
+      | AtomExpOpId v0 =>
+          ( push buf "AtomExpOpId" lineno
           ; push buf "(" lineno
           ; printLongId buf v0
           ; push buf ")" lineno
           )
-      | ExpId v0 =>
-          ( push buf "ExpId" lineno
+      | AtomExpId v0 =>
+          ( push buf "AtomExpId" lineno
           ; push buf "(" lineno
           ; printLongId buf v0
           ; push buf ")" lineno
           )
-      | ExpApp (v0 , v1) =>
-          ( push buf "ExpApp" lineno
-          ; push buf "(" lineno
-          ; printExp buf v0
-          ; push buf " , " lineno
-          ; printExp buf v1
-          ; push buf ")" lineno
-          )
-      | ExpParens v0 =>
-          ( push buf "ExpParens" lineno
+      | AtomExpParens v0 =>
+          ( push buf "AtomExpParens" lineno
           ; push buf "(" lineno
           ; printExp buf v0
           ; push buf ")" lineno
           )
-      | ExpTuple (v0 , v1 , v2) =>
-          ( push buf "ExpTuple" lineno
+      | AtomExpTuple (v0 , v1 , v2) =>
+          ( push buf "AtomExpTuple" lineno
           ; push buf "(" lineno
           ; printExp buf v0
           ; push buf " , " lineno
@@ -2985,40 +2990,50 @@ end = struct
           ; ( push buf "[" lineno ; List.appi (fn ( i , v2e ) => ( if i > 0 then push buf " , " lineno else () ; printExp buf v2e )) v2 ; push buf "]" lineno )
           ; push buf ")" lineno
           )
-      | ExpRecord v0 =>
-          ( push buf "ExpRecord" lineno
+      | AtomExpRecord v0 =>
+          ( push buf "AtomExpRecord" lineno
           ; push buf "(" lineno
           ; (case v0 of NONE => push buf "_" lineno | SOME v0v => printExpRow buf v0v)
           ; push buf ")" lineno
           )
-      | ExpSelector v0 =>
-          ( push buf "ExpSelector" lineno
+      | AtomExpSelector v0 =>
+          ( push buf "AtomExpSelector" lineno
           ; push buf "(" lineno
           ; printLab buf v0
           ; push buf ")" lineno
           )
-      | ExpList v0 =>
-          ( push buf "ExpList" lineno
+      | AtomExpList v0 =>
+          ( push buf "AtomExpList" lineno
           ; push buf "(" lineno
           ; (case v0 of NONE => push buf "_" lineno | SOME v0v => printExpListInner buf v0v)
           ; push buf ")" lineno
           )
-      | ExpSeq (v0 , v1) =>
-          ( push buf "ExpSeq" lineno
+      | AtomExpSeq (v0 , v1) =>
+          ( push buf "AtomExpSeq" lineno
           ; push buf "(" lineno
           ; printExp buf v0
           ; push buf " , " lineno
           ; ( push buf "[" lineno ; List.appi (fn ( i , v1e ) => ( if i > 0 then push buf " , " lineno else () ; printExp buf v1e )) v1 ; push buf "]" lineno )
           ; push buf ")" lineno
           )
-      | ExpLet (v0 , v1 , v2) =>
-          ( push buf "ExpLet" lineno
+      | AtomExpLet (v0 , v1 , v2) =>
+          ( push buf "AtomExpLet" lineno
           ; push buf "(" lineno
           ; printDecList buf v0
           ; push buf " , " lineno
           ; printExp buf v1
           ; push buf " , " lineno
           ; ( push buf "[" lineno ; List.appi (fn ( i , v2e ) => ( if i > 0 then push buf " , " lineno else () ; printExp buf v2e )) v2 ; push buf "]" lineno )
+          ; push buf ")" lineno
+          )
+  
+  and printExp buf
+    ( { node , span = { start = { lineno , ... } , ... } } : exp ) =
+    case node of
+        ExpApp v0 =>
+          ( push buf "ExpApp" lineno
+          ; push buf "(" lineno
+          ; ( push buf "[" lineno ; List.appi (fn ( i , v0e ) => ( if i > 0 then push buf " , " lineno else () ; printAtomExp buf v0e )) v0 ; push buf "]" lineno )
           ; push buf ")" lineno
           )
       | ExpAnnot (v0 , v1) =>
@@ -3280,25 +3295,25 @@ end = struct
           ; push buf ")" lineno
           )
   
-  and printTypNoStar buf
-    ( { node , span = { start = { lineno , ... } , ... } } : typ_no_star ) =
+  and printAtomTyp buf
+    ( { node , span = { start = { lineno , ... } , ... } } : atom_typ ) =
     case node of
-        TypNoStarVar v0 =>
-          ( push buf "TypNoStarVar" lineno
+        AtomTypVar v0 =>
+          ( push buf "AtomTypVar" lineno
           ; push buf "(" lineno
           ; printTyvar buf v0
           ; push buf ")" lineno
           )
-      | TypNoStarConApp (v0 , v1) =>
-          ( push buf "TypNoStarConApp" lineno
+      | AtomTypConApp (v0 , v1) =>
+          ( push buf "AtomTypConApp" lineno
           ; push buf "(" lineno
-          ; printTypNoStar buf v0
+          ; printAtomTyp buf v0
           ; push buf " , " lineno
           ; printLongId buf v1
           ; push buf ")" lineno
           )
-      | TypNoStarConAppMulti (v0 , v1 , v2 , v3) =>
-          ( push buf "TypNoStarConAppMulti" lineno
+      | AtomTypConAppMulti (v0 , v1 , v2 , v3) =>
+          ( push buf "AtomTypConAppMulti" lineno
           ; push buf "(" lineno
           ; printTyp buf v0
           ; push buf " , " lineno
@@ -3309,20 +3324,20 @@ end = struct
           ; printLongId buf v3
           ; push buf ")" lineno
           )
-      | TypNoStarCon v0 =>
-          ( push buf "TypNoStarCon" lineno
+      | AtomTypCon v0 =>
+          ( push buf "AtomTypCon" lineno
           ; push buf "(" lineno
           ; printLongId buf v0
           ; push buf ")" lineno
           )
-      | TypNoStarParens v0 =>
-          ( push buf "TypNoStarParens" lineno
+      | AtomTypParens v0 =>
+          ( push buf "AtomTypParens" lineno
           ; push buf "(" lineno
           ; printTyp buf v0
           ; push buf ")" lineno
           )
-      | TypNoStarRecord v0 =>
-          ( push buf "TypNoStarRecord" lineno
+      | AtomTypRecord v0 =>
+          ( push buf "AtomTypRecord" lineno
           ; push buf "(" lineno
           ; (case v0 of NONE => push buf "_" lineno | SOME v0v => printTypRow buf v0v)
           ; push buf ")" lineno
@@ -3334,15 +3349,15 @@ end = struct
         TypInner v0 =>
           ( push buf "TypInner" lineno
           ; push buf "(" lineno
-          ; printTypNoStar buf v0
+          ; printAtomTyp buf v0
           ; push buf ")" lineno
           )
       | TypTupleTyp (v0 , v1) =>
           ( push buf "TypTupleTyp" lineno
           ; push buf "(" lineno
-          ; printTypNoStar buf v0
+          ; printAtomTyp buf v0
           ; push buf " , " lineno
-          ; ( push buf "[" lineno ; List.appi (fn ( i , v1e ) => ( if i > 0 then push buf " , " lineno else () ; printTypNoStar buf v1e )) v1 ; push buf "]" lineno )
+          ; ( push buf "[" lineno ; List.appi (fn ( i , v1e ) => ( if i > 0 then push buf " , " lineno else () ; printAtomTyp buf v1e )) v1 ; push buf "]" lineno )
           ; push buf ")" lineno
           )
       | TypArrow (v0 , v1) =>
@@ -4080,6 +4095,7 @@ end = struct
   val printCon = print printCon
   val printLab = print printLab
   val printLongId = print printLongId
+  val printAtomExp = print printAtomExp
   val printExp = print printExp
   val printExpListInner = print printExpListInner
   val printExpRow = print printExpRow
@@ -4088,7 +4104,7 @@ end = struct
   val printPat = print printPat
   val printPatListInner = print printPatListInner
   val printPatRow = print printPatRow
-  val printTypNoStar = print printTypNoStar
+  val printAtomTyp = print printAtomTyp
   val printTyp = print printTyp
   val printTypRow = print printTypRow
   val printDec = print printDec
@@ -4153,16 +4169,16 @@ end = struct
     let val prettyPrintSelf = prettyPrintCon
     in
     case node of
-        ConString v0 =>
-          ( prettyPrintString buf v0)
-      | ConChar v0 =>
-          ( prettyPrintChar buf v0)
-      | ConFloat v0 =>
-          ( prettyPrintFloat buf v0)
+        ConInt v0 =>
+          ( prettyPrintInt buf v0)
       | ConWord v0 =>
           ( prettyPrintWord buf v0)
-      | ConInt v0 =>
-          ( prettyPrintInt buf v0)
+      | ConFloat v0 =>
+          ( prettyPrintFloat buf v0)
+      | ConChar v0 =>
+          ( prettyPrintChar buf v0)
+      | ConString v0 =>
+          ( prettyPrintString buf v0)
     end
   
   and prettyPrintLab buf
@@ -4170,10 +4186,10 @@ end = struct
     let val prettyPrintSelf = prettyPrintLab
     in
     case node of
-        LabNum v0 =>
-          ( prettyPrintInt buf v0)
-      | LabId v0 =>
+        LabId v0 =>
           ( prettyPrintId buf v0)
+      | LabNum v0 =>
+          ( prettyPrintInt buf v0)
     end
   
   and prettyPrintLongId buf
@@ -4190,55 +4206,23 @@ end = struct
                   end)) v1)
     end
   
-  and prettyPrintExp buf
-    ( { node , span = { start = { lineno , ... } , ... } } : exp ) =
-    let val prettyPrintSelf = prettyPrintExp
+  and prettyPrintAtomExp buf
+    ( { node , span = { start = { lineno , ... } , ... } } : atom_exp ) =
+    let val prettyPrintSelf = prettyPrintAtomExp
     in
     case node of
-        ExpFn v1 =>
-          ( push buf "fn" lineno
-          ; prettyPrintMatch buf v1)
-      | ExpCase (v1 , v3) =>
-          ( push buf "case" lineno
-          ; prettyPrintExp buf v1
-          ; push buf "of" lineno
-          ; prettyPrintMatch buf v3)
-      | ExpLet (v1 , v3 , v4) =>
-          ( push buf "let" lineno
-          ; prettyPrintDecList buf v1
-          ; push buf "in" lineno
-          ; prettyPrintExp buf v3
-          ; List.app (fn v5 =>
-              ( let val v7 = v5
-                  in push buf ";" lineno
-                  ; prettyPrintExp buf v7
-                  end)) v4
-          ; push buf "end" lineno)
-      | ExpSeq (v1 , v2) =>
+        AtomExpConst v0 =>
+          ( prettyPrintCon buf v0)
+      | AtomExpOpId v1 =>
+          ( push buf "op" lineno
+          ; prettyPrintLongId buf v1)
+      | AtomExpId v0 =>
+          ( prettyPrintLongId buf v0)
+      | AtomExpParens v1 =>
           ( push buf "(" lineno
           ; prettyPrintExp buf v1
-          ; List.app (fn v3 =>
-              ( let val v5 = v3
-                  in push buf ";" lineno
-                  ; prettyPrintExp buf v5
-                  end)) v2
           ; push buf ")" lineno)
-      | ExpList v1 =>
-          ( push buf "[" lineno
-          ; (case v1 of NONE => ()
-              | SOME v2 =>
-              ( prettyPrintExpListInner buf v2))
-          ; push buf "]" lineno)
-      | ExpSelector v1 =>
-          ( push buf "#" lineno
-          ; prettyPrintLab buf v1)
-      | ExpRecord v1 =>
-          ( push buf "{" lineno
-          ; (case v1 of NONE => ()
-              | SOME v2 =>
-              ( prettyPrintExpRow buf v2))
-          ; push buf "}" lineno)
-      | ExpTuple (v1 , v3 , v4) =>
+      | AtomExpTuple (v1 , v3 , v4) =>
           ( push buf "(" lineno
           ; prettyPrintExp buf v1
           ; push buf "," lineno
@@ -4249,20 +4233,59 @@ end = struct
                   ; prettyPrintExp buf v7
                   end)) v4
           ; push buf ")" lineno)
-      | ExpParens v1 =>
+      | AtomExpRecord v1 =>
+          ( push buf "{" lineno
+          ; (case v1 of NONE => ()
+              | SOME v2 =>
+              ( prettyPrintExpRow buf v2))
+          ; push buf "}" lineno)
+      | AtomExpSelector v1 =>
+          ( push buf "#" lineno
+          ; prettyPrintLab buf v1)
+      | AtomExpList v1 =>
+          ( push buf "[" lineno
+          ; (case v1 of NONE => ()
+              | SOME v2 =>
+              ( prettyPrintExpListInner buf v2))
+          ; push buf "]" lineno)
+      | AtomExpSeq (v1 , v2) =>
           ( push buf "(" lineno
           ; prettyPrintExp buf v1
+          ; List.app (fn v3 =>
+              ( let val v5 = v3
+                  in push buf ";" lineno
+                  ; prettyPrintExp buf v5
+                  end)) v2
           ; push buf ")" lineno)
-      | ExpId v0 =>
-          ( prettyPrintLongId buf v0)
-      | ExpOpId v1 =>
-          ( push buf "op" lineno
-          ; prettyPrintLongId buf v1)
-      | ExpConst v0 =>
-          ( prettyPrintCon buf v0)
-      | ExpApp (v0 , v1) =>
-          ( prettyPrintSelf buf v0
-          ; prettyPrintSelf buf v1)
+      | AtomExpLet (v1 , v3 , v4) =>
+          ( push buf "let" lineno
+          ; prettyPrintDecList buf v1
+          ; push buf "in" lineno
+          ; prettyPrintExp buf v3
+          ; List.app (fn v5 =>
+              ( let val v7 = v5
+                  in push buf ";" lineno
+                  ; prettyPrintExp buf v7
+                  end)) v4
+          ; push buf "end" lineno)
+    end
+  
+  and prettyPrintExp buf
+    ( { node , span = { start = { lineno , ... } , ... } } : exp ) =
+    let val prettyPrintSelf = prettyPrintExp
+    in
+    case node of
+        ExpApp v0 =>
+          ( List.app (fn v1 =>
+              ( prettyPrintAtomExp buf v1)) v0)
+      | ExpCase (v1 , v3) =>
+          ( push buf "case" lineno
+          ; prettyPrintExp buf v1
+          ; push buf "of" lineno
+          ; prettyPrintMatch buf v3)
+      | ExpFn v1 =>
+          ( push buf "fn" lineno
+          ; prettyPrintMatch buf v1)
       | ExpAnnot (v0 , v2) =>
           ( prettyPrintSelf buf v0
           ; push buf ":" lineno
@@ -4271,11 +4294,13 @@ end = struct
           ( prettyPrintSelf buf v0
           ; push buf "handle" lineno
           ; prettyPrintMatch buf v2)
-      | ExpWhile (v1 , v3) =>
-          ( push buf "while" lineno
-          ; prettyPrintExp buf v1
-          ; push buf "do" lineno
-          ; prettyPrintSelf buf v3)
+      | ExpRaise v1 =>
+          ( push buf "raise" lineno
+          ; prettyPrintSelf buf v1)
+      | ExpAndAlso (v0 , v2) =>
+          ( prettyPrintSelf buf v0
+          ; push buf "andalso" lineno
+          ; prettyPrintSelf buf v2)
       | ExpIf (v1 , v3 , v5) =>
           ( push buf "if" lineno
           ; prettyPrintExp buf v1
@@ -4283,13 +4308,11 @@ end = struct
           ; prettyPrintExp buf v3
           ; push buf "else" lineno
           ; prettyPrintSelf buf v5)
-      | ExpAndAlso (v0 , v2) =>
-          ( prettyPrintSelf buf v0
-          ; push buf "andalso" lineno
-          ; prettyPrintSelf buf v2)
-      | ExpRaise v1 =>
-          ( push buf "raise" lineno
-          ; prettyPrintSelf buf v1)
+      | ExpWhile (v1 , v3) =>
+          ( push buf "while" lineno
+          ; prettyPrintExp buf v1
+          ; push buf "do" lineno
+          ; prettyPrintSelf buf v3)
       | ExpOrElse (v0 , v2) =>
           ( prettyPrintSelf buf v0
           ; push buf "orelse" lineno
@@ -4358,18 +4381,25 @@ end = struct
     let val prettyPrintSelf = prettyPrintPat
     in
     case node of
-        PatList v1 =>
-          ( push buf "[" lineno
-          ; (case v1 of NONE => ()
-              | SOME v2 =>
-              ( prettyPrintPatListInner buf v2))
-          ; push buf "]" lineno)
-      | PatRecord v1 =>
-          ( push buf "{" lineno
-          ; (case v1 of NONE => ()
-              | SOME v2 =>
-              ( prettyPrintPatRow buf v2))
-          ; push buf "}" lineno)
+        PatConst v0 =>
+          ( prettyPrintCon buf v0)
+      | PatWildcard =>
+          ( push buf "_" lineno)
+      | PatOpVar v1 =>
+          ( push buf "op" lineno
+          ; prettyPrintId buf v1)
+      | PatVar v0 =>
+          ( prettyPrintId buf v0)
+      | PatOpCon (v1 , v2) =>
+          ( push buf "op" lineno
+          ; prettyPrintLongId buf v1
+          ; (case v2 of NONE => ()
+              | SOME v3 =>
+              ( prettyPrintPat buf v3)))
+      | PatParens v1 =>
+          ( push buf "(" lineno
+          ; prettyPrintPat buf v1
+          ; push buf ")" lineno)
       | PatTuple (v1 , v3 , v4) =>
           ( push buf "(" lineno
           ; prettyPrintPat buf v1
@@ -4381,35 +4411,25 @@ end = struct
                   ; prettyPrintPat buf v7
                   end)) v4
           ; push buf ")" lineno)
-      | PatParens v1 =>
-          ( push buf "(" lineno
-          ; prettyPrintPat buf v1
-          ; push buf ")" lineno)
-      | PatOpCon (v1 , v2) =>
-          ( push buf "op" lineno
-          ; prettyPrintLongId buf v1
-          ; (case v2 of NONE => ()
-              | SOME v3 =>
-              ( prettyPrintPat buf v3)))
-      | PatVar v0 =>
-          ( prettyPrintId buf v0)
-      | PatOpVar v1 =>
-          ( push buf "op" lineno
-          ; prettyPrintId buf v1)
-      | PatWildcard =>
-          ( push buf "_" lineno)
-      | PatConst v0 =>
-          ( prettyPrintCon buf v0)
-      | PatLayered (v0 , v1 , v3) =>
-          ( prettyPrintId buf v0
+      | PatRecord v1 =>
+          ( push buf "{" lineno
           ; (case v1 of NONE => ()
               | SOME v2 =>
-              ( let val v4 = v2
-                  in push buf ":" lineno
-                  ; prettyPrintTyp buf v4
-                  end))
-          ; push buf "as" lineno
-          ; prettyPrintSelf buf v3)
+              ( prettyPrintPatRow buf v2))
+          ; push buf "}" lineno)
+      | PatList v1 =>
+          ( push buf "[" lineno
+          ; (case v1 of NONE => ()
+              | SOME v2 =>
+              ( prettyPrintPatListInner buf v2))
+          ; push buf "]" lineno)
+      | PatCon (v0 , v1) =>
+          ( prettyPrintLongId buf v0
+          ; prettyPrintSelf buf v1)
+      | PatAnnot (v0 , v2) =>
+          ( prettyPrintSelf buf v0
+          ; push buf ":" lineno
+          ; prettyPrintTyp buf v2)
       | PatOpLayered (v1 , v2 , v4) =>
           ( push buf "op" lineno
           ; prettyPrintId buf v1
@@ -4421,13 +4441,16 @@ end = struct
                   end))
           ; push buf "as" lineno
           ; prettyPrintSelf buf v4)
-      | PatAnnot (v0 , v2) =>
-          ( prettyPrintSelf buf v0
-          ; push buf ":" lineno
-          ; prettyPrintTyp buf v2)
-      | PatCon (v0 , v1) =>
-          ( prettyPrintLongId buf v0
-          ; prettyPrintSelf buf v1)
+      | PatLayered (v0 , v1 , v3) =>
+          ( prettyPrintId buf v0
+          ; (case v1 of NONE => ()
+              | SOME v2 =>
+              ( let val v4 = v2
+                  in push buf ":" lineno
+                  ; prettyPrintTyp buf v4
+                  end))
+          ; push buf "as" lineno
+          ; prettyPrintSelf buf v3)
     end
   
   and prettyPrintPatListInner buf
@@ -4449,7 +4472,19 @@ end = struct
     let val prettyPrintSelf = prettyPrintPatRow
     in
     case node of
-        PatRowVar (v0 , v1 , v2 , v3) =>
+        PatRowWildcard =>
+          ( push buf "..." lineno)
+      | PatRowPat (v0 , v2 , v3) =>
+          ( prettyPrintLab buf v0
+          ; push buf "=" lineno
+          ; prettyPrintPat buf v2
+          ; (case v3 of NONE => ()
+              | SOME v4 =>
+              ( let val v6 = v4
+                  in push buf "," lineno
+                  ; prettyPrintPatRow buf v6
+                  end)))
+      | PatRowVar (v0 , v1 , v2 , v3) =>
           ( prettyPrintId buf v0
           ; (case v1 of NONE => ()
               | SOME v2 =>
@@ -4469,38 +4504,16 @@ end = struct
                   in push buf "," lineno
                   ; prettyPrintPatRow buf v6
                   end)))
-      | PatRowPat (v0 , v2 , v3) =>
-          ( prettyPrintLab buf v0
-          ; push buf "=" lineno
-          ; prettyPrintPat buf v2
-          ; (case v3 of NONE => ()
-              | SOME v4 =>
-              ( let val v6 = v4
-                  in push buf "," lineno
-                  ; prettyPrintPatRow buf v6
-                  end)))
-      | PatRowWildcard =>
-          ( push buf "..." lineno)
     end
   
-  and prettyPrintTypNoStar buf
-    ( { node , span = { start = { lineno , ... } , ... } } : typ_no_star ) =
-    let val prettyPrintSelf = prettyPrintTypNoStar
+  and prettyPrintAtomTyp buf
+    ( { node , span = { start = { lineno , ... } , ... } } : atom_typ ) =
+    let val prettyPrintSelf = prettyPrintAtomTyp
     in
     case node of
-        TypNoStarRecord v1 =>
-          ( push buf "{" lineno
-          ; (case v1 of NONE => ()
-              | SOME v2 =>
-              ( prettyPrintTypRow buf v2))
-          ; push buf "}" lineno)
-      | TypNoStarParens v1 =>
-          ( push buf "(" lineno
-          ; prettyPrintTyp buf v1
-          ; push buf ")" lineno)
-      | TypNoStarCon v0 =>
-          ( prettyPrintLongId buf v0)
-      | TypNoStarConAppMulti (v1 , v3 , v4 , v6) =>
+        AtomTypVar v0 =>
+          ( prettyPrintTyvar buf v0)
+      | AtomTypConAppMulti (v1 , v3 , v4 , v6) =>
           ( push buf "(" lineno
           ; prettyPrintTyp buf v1
           ; push buf "," lineno
@@ -4512,9 +4525,19 @@ end = struct
                   end)) v4
           ; push buf ")" lineno
           ; prettyPrintLongId buf v6)
-      | TypNoStarVar v0 =>
-          ( prettyPrintTyvar buf v0)
-      | TypNoStarConApp (v0 , v1) =>
+      | AtomTypCon v0 =>
+          ( prettyPrintLongId buf v0)
+      | AtomTypParens v1 =>
+          ( push buf "(" lineno
+          ; prettyPrintTyp buf v1
+          ; push buf ")" lineno)
+      | AtomTypRecord v1 =>
+          ( push buf "{" lineno
+          ; (case v1 of NONE => ()
+              | SOME v2 =>
+              ( prettyPrintTypRow buf v2))
+          ; push buf "}" lineno)
+      | AtomTypConApp (v0 , v1) =>
           ( prettyPrintSelf buf v0
           ; prettyPrintLongId buf v1)
     end
@@ -4524,15 +4547,15 @@ end = struct
     let val prettyPrintSelf = prettyPrintTyp
     in
     case node of
-        TypTupleTyp (v0 , v1) =>
-          ( prettyPrintTypNoStar buf v0
+        TypInner v0 =>
+          ( prettyPrintAtomTyp buf v0)
+      | TypTupleTyp (v0 , v1) =>
+          ( prettyPrintAtomTyp buf v0
           ; List.app (fn v2 =>
               ( let val v4 = v2
                   in push buf "*" lineno
-                  ; prettyPrintTypNoStar buf v4
+                  ; prettyPrintAtomTyp buf v4
                   end)) v1)
-      | TypInner v0 =>
-          ( prettyPrintTypNoStar buf v0)
       | TypArrow (v0 , v2) =>
           ( prettyPrintSelf buf v0
           ; push buf "->" lineno
@@ -4562,46 +4585,32 @@ end = struct
     let val prettyPrintSelf = prettyPrintDec
     in
     case node of
-        DecInfixr (v1 , v2 , v3) =>
-          ( push buf "infixr" lineno
-          ; (case v1 of NONE => ()
-              | SOME v2 =>
-              ( prettyPrintInt buf v2))
-          ; prettyPrintId buf v2
-          ; List.app (fn v4 =>
-              ( prettyPrintId buf v4)) v3)
-      | DecInfix (v1 , v2 , v3) =>
-          ( push buf "infix" lineno
-          ; (case v1 of NONE => ()
-              | SOME v2 =>
-              ( prettyPrintInt buf v2))
-          ; prettyPrintId buf v2
-          ; List.app (fn v4 =>
-              ( prettyPrintId buf v4)) v3)
-      | DecNonfix (v1 , v2) =>
-          ( push buf "nonfix" lineno
+        DecVal (v1 , v2) =>
+          ( push buf "val" lineno
+          ; prettyPrintTyVarSeq buf v1
+          ; prettyPrintValBind buf v2)
+      | DecFun (v1 , v2) =>
+          ( push buf "fun" lineno
+          ; prettyPrintTyVarSeq buf v1
+          ; prettyPrintFunBind buf v2)
+      | DecType v1 =>
+          ( push buf "type" lineno
+          ; prettyPrintTypBind buf v1)
+      | DecDatatype (v1 , v2) =>
+          ( push buf "datatype" lineno
+          ; prettyPrintDatBind buf v1
+          ; (case v2 of NONE => ()
+              | SOME v3 =>
+              ( let val v5 = v3
+                  in push buf "withtype" lineno
+                  ; prettyPrintTypBind buf v5
+                  end)))
+      | DecDatatypeRepl (v1 , v4) =>
+          ( push buf "datatype" lineno
           ; prettyPrintId buf v1
-          ; List.app (fn v3 =>
-              ( prettyPrintId buf v3)) v2)
-      | DecOpen (v1 , v2) =>
-          ( push buf "open" lineno
-          ; prettyPrintLongId buf v1
-          ; List.app (fn v3 =>
-              ( prettyPrintLongId buf v3)) v2)
-      | DecLocal (v1 , v3) =>
-          ( push buf "local" lineno
-          ; prettyPrintDecList buf v1
-          ; push buf "in" lineno
-          ; prettyPrintDecList buf v3
-          ; push buf "end" lineno)
-      | DecSemicolon =>
-          ( push buf ";" lineno)
-      | DecStructure v1 =>
-          ( push buf "structure" lineno
-          ; prettyPrintStrBind buf v1)
-      | DecException v1 =>
-          ( push buf "exception" lineno
-          ; prettyPrintExnBind buf v1)
+          ; push buf "=" lineno
+          ; push buf "datatype" lineno
+          ; prettyPrintLongId buf v4)
       | DecAbstype (v1 , v2 , v4) =>
           ( push buf "abstype" lineno
           ; prettyPrintDatBind buf v1
@@ -4614,32 +4623,46 @@ end = struct
           ; push buf "with" lineno
           ; prettyPrintDecList buf v4
           ; push buf "end" lineno)
-      | DecDatatypeRepl (v1 , v4) =>
-          ( push buf "datatype" lineno
+      | DecException v1 =>
+          ( push buf "exception" lineno
+          ; prettyPrintExnBind buf v1)
+      | DecStructure v1 =>
+          ( push buf "structure" lineno
+          ; prettyPrintStrBind buf v1)
+      | DecSemicolon =>
+          ( push buf ";" lineno)
+      | DecLocal (v1 , v3) =>
+          ( push buf "local" lineno
+          ; prettyPrintDecList buf v1
+          ; push buf "in" lineno
+          ; prettyPrintDecList buf v3
+          ; push buf "end" lineno)
+      | DecOpen (v1 , v2) =>
+          ( push buf "open" lineno
+          ; prettyPrintLongId buf v1
+          ; List.app (fn v3 =>
+              ( prettyPrintLongId buf v3)) v2)
+      | DecNonfix (v1 , v2) =>
+          ( push buf "nonfix" lineno
           ; prettyPrintId buf v1
-          ; push buf "=" lineno
-          ; push buf "datatype" lineno
-          ; prettyPrintLongId buf v4)
-      | DecDatatype (v1 , v2) =>
-          ( push buf "datatype" lineno
-          ; prettyPrintDatBind buf v1
-          ; (case v2 of NONE => ()
-              | SOME v3 =>
-              ( let val v5 = v3
-                  in push buf "withtype" lineno
-                  ; prettyPrintTypBind buf v5
-                  end)))
-      | DecType v1 =>
-          ( push buf "type" lineno
-          ; prettyPrintTypBind buf v1)
-      | DecFun (v1 , v2) =>
-          ( push buf "fun" lineno
-          ; prettyPrintTyVarSeq buf v1
-          ; prettyPrintFunBind buf v2)
-      | DecVal (v1 , v2) =>
-          ( push buf "val" lineno
-          ; prettyPrintTyVarSeq buf v1
-          ; prettyPrintValBind buf v2)
+          ; List.app (fn v3 =>
+              ( prettyPrintId buf v3)) v2)
+      | DecInfix (v1 , v2 , v3) =>
+          ( push buf "infix" lineno
+          ; (case v1 of NONE => ()
+              | SOME v2 =>
+              ( prettyPrintInt buf v2))
+          ; prettyPrintId buf v2
+          ; List.app (fn v4 =>
+              ( prettyPrintId buf v4)) v3)
+      | DecInfixr (v1 , v2 , v3) =>
+          ( push buf "infixr" lineno
+          ; (case v1 of NONE => ()
+              | SOME v2 =>
+              ( prettyPrintInt buf v2))
+          ; prettyPrintId buf v2
+          ; List.app (fn v4 =>
+              ( prettyPrintId buf v4)) v3)
     end
   
   and prettyPrintDecList buf
@@ -4657,8 +4680,8 @@ end = struct
     let val prettyPrintSelf = prettyPrintTyVarSeq
     in
     case node of
-        TyVarSeqEmpty =>
-          ( )
+        TyVarSeqOne v0 =>
+          ( prettyPrintTyvar buf v0)
       | TyVarSeqMany (v1 , v2) =>
           ( push buf "(" lineno
           ; prettyPrintTyvar buf v1
@@ -4668,8 +4691,8 @@ end = struct
                   ; prettyPrintTyvar buf v5
                   end)) v2
           ; push buf ")" lineno)
-      | TyVarSeqOne v0 =>
-          ( prettyPrintTyvar buf v0)
+      | TyVarSeqEmpty =>
+          ( )
     end
   
   and prettyPrintValBind buf
@@ -4712,7 +4735,44 @@ end = struct
     let val prettyPrintSelf = prettyPrintFunMatch
     in
     case node of
-        FunMatchInfixParen (v1 , v2 , v3 , v5 , v6 , v8 , v9) =>
+        FunMatchNonfix (v1 , v2 , v3 , v4 , v6 , v7) =>
+          ( prettyPrintId buf v1
+          ; prettyPrintPat buf v2
+          ; List.app (fn v4 =>
+              ( prettyPrintPat buf v4)) v3
+          ; (case v4 of NONE => ()
+              | SOME v5 =>
+              ( let val v7 = v5
+                  in push buf ":" lineno
+                  ; prettyPrintTyp buf v7
+                  end))
+          ; push buf "=" lineno
+          ; prettyPrintExp buf v6
+          ; (case v7 of NONE => ()
+              | SOME v8 =>
+              ( let val v10 = v8
+                  in push buf "|" lineno
+                  ; prettyPrintFunMatch buf v10
+                  end)))
+      | FunMatchInfix (v0 , v1 , v2 , v3 , v5 , v6) =>
+          ( prettyPrintPat buf v0
+          ; prettyPrintId buf v1
+          ; prettyPrintPat buf v2
+          ; (case v3 of NONE => ()
+              | SOME v4 =>
+              ( let val v6 = v4
+                  in push buf ":" lineno
+                  ; prettyPrintTyp buf v6
+                  end))
+          ; push buf "=" lineno
+          ; prettyPrintExp buf v5
+          ; (case v6 of NONE => ()
+              | SOME v7 =>
+              ( let val v9 = v7
+                  in push buf "|" lineno
+                  ; prettyPrintFunMatch buf v9
+                  end)))
+      | FunMatchInfixParen (v1 , v2 , v3 , v5 , v6 , v8 , v9) =>
           ( push buf "(" lineno
           ; prettyPrintPat buf v1
           ; prettyPrintId buf v2
@@ -4733,43 +4793,6 @@ end = struct
               ( let val v12 = v10
                   in push buf "|" lineno
                   ; prettyPrintFunMatch buf v12
-                  end)))
-      | FunMatchInfix (v0 , v1 , v2 , v3 , v5 , v6) =>
-          ( prettyPrintPat buf v0
-          ; prettyPrintId buf v1
-          ; prettyPrintPat buf v2
-          ; (case v3 of NONE => ()
-              | SOME v4 =>
-              ( let val v6 = v4
-                  in push buf ":" lineno
-                  ; prettyPrintTyp buf v6
-                  end))
-          ; push buf "=" lineno
-          ; prettyPrintExp buf v5
-          ; (case v6 of NONE => ()
-              | SOME v7 =>
-              ( let val v9 = v7
-                  in push buf "|" lineno
-                  ; prettyPrintFunMatch buf v9
-                  end)))
-      | FunMatchNonfix (v1 , v2 , v3 , v4 , v6 , v7) =>
-          ( prettyPrintId buf v1
-          ; prettyPrintPat buf v2
-          ; List.app (fn v4 =>
-              ( prettyPrintPat buf v4)) v3
-          ; (case v4 of NONE => ()
-              | SOME v5 =>
-              ( let val v7 = v5
-                  in push buf ":" lineno
-                  ; prettyPrintTyp buf v7
-                  end))
-          ; push buf "=" lineno
-          ; prettyPrintExp buf v6
-          ; (case v7 of NONE => ()
-              | SOME v8 =>
-              ( let val v10 = v8
-                  in push buf "|" lineno
-                  ; prettyPrintFunMatch buf v10
                   end)))
     end
   
@@ -4835,17 +4858,7 @@ end = struct
     let val prettyPrintSelf = prettyPrintExnBind
     in
     case node of
-        ExnBindRepl (v0 , v2 , v3) =>
-          ( prettyPrintId buf v0
-          ; push buf "=" lineno
-          ; prettyPrintLongId buf v2
-          ; (case v3 of NONE => ()
-              | SOME v4 =>
-              ( let val v6 = v4
-                  in push buf "and" lineno
-                  ; prettyPrintExnBind buf v6
-                  end)))
-      | ExnBindGen (v0 , v1 , v2) =>
+        ExnBindGen (v0 , v1 , v2) =>
           ( prettyPrintId buf v0
           ; (case v1 of NONE => ()
               | SOME v2 =>
@@ -4859,6 +4872,16 @@ end = struct
                   in push buf "and" lineno
                   ; prettyPrintExnBind buf v5
                   end)))
+      | ExnBindRepl (v0 , v2 , v3) =>
+          ( prettyPrintId buf v0
+          ; push buf "=" lineno
+          ; prettyPrintLongId buf v2
+          ; (case v3 of NONE => ()
+              | SOME v4 =>
+              ( let val v6 = v4
+                  in push buf "and" lineno
+                  ; prettyPrintExnBind buf v6
+                  end)))
     end
   
   and prettyPrintStr buf
@@ -4866,35 +4889,35 @@ end = struct
     let val prettyPrintSelf = prettyPrintStr
     in
     case node of
-        StrLet (v1 , v3) =>
-          ( push buf "let" lineno
+        StrId v0 =>
+          ( prettyPrintLongId buf v0)
+      | StrStruct v1 =>
+          ( push buf "struct" lineno
           ; prettyPrintDecList buf v1
-          ; push buf "in" lineno
-          ; prettyPrintStr buf v3
           ; push buf "end" lineno)
-      | StrFctAppDec (v0 , v2) =>
-          ( prettyPrintId buf v0
-          ; push buf "(" lineno
-          ; prettyPrintDecList buf v2
-          ; push buf ")" lineno)
       | StrFctApp (v0 , v2) =>
           ( prettyPrintId buf v0
           ; push buf "(" lineno
           ; prettyPrintStr buf v2
           ; push buf ")" lineno)
-      | StrStruct v1 =>
-          ( push buf "struct" lineno
+      | StrFctAppDec (v0 , v2) =>
+          ( prettyPrintId buf v0
+          ; push buf "(" lineno
+          ; prettyPrintDecList buf v2
+          ; push buf ")" lineno)
+      | StrLet (v1 , v3) =>
+          ( push buf "let" lineno
           ; prettyPrintDecList buf v1
+          ; push buf "in" lineno
+          ; prettyPrintStr buf v3
           ; push buf "end" lineno)
-      | StrId v0 =>
-          ( prettyPrintLongId buf v0)
-      | StrOpaque (v0 , v2) =>
-          ( prettyPrintSelf buf v0
-          ; push buf ":>" lineno
-          ; prettyPrintSigExp buf v2)
       | StrTransparent (v0 , v2) =>
           ( prettyPrintSelf buf v0
           ; push buf ":" lineno
+          ; prettyPrintSigExp buf v2)
+      | StrOpaque (v0 , v2) =>
+          ( prettyPrintSelf buf v0
+          ; push buf ":>" lineno
           ; prettyPrintSigExp buf v2)
     end
   
@@ -4923,11 +4946,11 @@ end = struct
     let val prettyPrintSelf = prettyPrintSigAnnot
     in
     case node of
-        SigAnnotOpaque v1 =>
-          ( push buf ":>" lineno
-          ; prettyPrintSigExp buf v1)
-      | SigAnnotTransparent v1 =>
+        SigAnnotTransparent v1 =>
           ( push buf ":" lineno
+          ; prettyPrintSigExp buf v1)
+      | SigAnnotOpaque v1 =>
+          ( push buf ":>" lineno
           ; prettyPrintSigExp buf v1)
     end
   
@@ -4936,12 +4959,12 @@ end = struct
     let val prettyPrintSelf = prettyPrintSigExp
     in
     case node of
-        SigExpSig v1 =>
+        SigExpId v0 =>
+          ( prettyPrintId buf v0)
+      | SigExpSig v1 =>
           ( push buf "sig" lineno
           ; prettyPrintSpecList buf v1
           ; push buf "end" lineno)
-      | SigExpId v0 =>
-          ( prettyPrintId buf v0)
       | SigExpWhere (v0 , v3) =>
           ( prettyPrintSelf buf v0
           ; push buf "where" lineno
@@ -4973,52 +4996,43 @@ end = struct
     let val prettyPrintSelf = prettyPrintSpec
     in
     case node of
-        SpecIncludeMulti (v1 , v2) =>
-          ( push buf "include" lineno
-          ; prettyPrintId buf v1
-          ; List.app (fn v3 =>
-              ( prettyPrintId buf v3)) v2)
-      | SpecInclude v1 =>
-          ( push buf "include" lineno
-          ; prettyPrintSigExp buf v1)
-      | SpecSemicolon =>
-          ( push buf ";" lineno)
-      | SpecStructure v1 =>
-          ( push buf "structure" lineno
-          ; prettyPrintStrDesc buf v1)
-      | SpecException v1 =>
-          ( push buf "exception" lineno
-          ; prettyPrintExnDesc buf v1)
+        SpecVal v1 =>
+          ( push buf "val" lineno
+          ; prettyPrintValDesc buf v1)
+      | SpecType v1 =>
+          ( push buf "type" lineno
+          ; prettyPrintTypDesc buf v1)
+      | SpecEqtype v1 =>
+          ( push buf "eqtype" lineno
+          ; prettyPrintTypDesc buf v1)
+      | SpecTypeAbbrev v1 =>
+          ( push buf "type" lineno
+          ; prettyPrintTypBind buf v1)
+      | SpecDatatype v1 =>
+          ( push buf "datatype" lineno
+          ; prettyPrintDatDesc buf v1)
       | SpecDatatypeRepl (v1 , v4) =>
           ( push buf "datatype" lineno
           ; prettyPrintId buf v1
           ; push buf "=" lineno
           ; push buf "datatype" lineno
           ; prettyPrintLongId buf v4)
-      | SpecDatatype v1 =>
-          ( push buf "datatype" lineno
-          ; prettyPrintDatDesc buf v1)
-      | SpecTypeAbbrev v1 =>
-          ( push buf "type" lineno
-          ; prettyPrintTypBind buf v1)
-      | SpecEqtype v1 =>
-          ( push buf "eqtype" lineno
-          ; prettyPrintTypDesc buf v1)
-      | SpecType v1 =>
-          ( push buf "type" lineno
-          ; prettyPrintTypDesc buf v1)
-      | SpecVal v1 =>
-          ( push buf "val" lineno
-          ; prettyPrintValDesc buf v1)
-      | SpecSharing (v0 , v2 , v3) =>
-          ( prettyPrintSelf buf v0
-          ; push buf "sharing" lineno
-          ; prettyPrintLongId buf v2
-          ; List.app (fn v4 =>
-              ( let val v6 = v4
-                  in push buf "=" lineno
-                  ; prettyPrintLongId buf v6
-                  end)) v3)
+      | SpecException v1 =>
+          ( push buf "exception" lineno
+          ; prettyPrintExnDesc buf v1)
+      | SpecStructure v1 =>
+          ( push buf "structure" lineno
+          ; prettyPrintStrDesc buf v1)
+      | SpecSemicolon =>
+          ( push buf ";" lineno)
+      | SpecInclude v1 =>
+          ( push buf "include" lineno
+          ; prettyPrintSigExp buf v1)
+      | SpecIncludeMulti (v1 , v2) =>
+          ( push buf "include" lineno
+          ; prettyPrintId buf v1
+          ; List.app (fn v3 =>
+              ( prettyPrintId buf v3)) v2)
       | SpecSharingType (v0 , v3 , v4) =>
           ( prettyPrintSelf buf v0
           ; push buf "sharing" lineno
@@ -5029,6 +5043,15 @@ end = struct
                   in push buf "=" lineno
                   ; prettyPrintLongId buf v7
                   end)) v4)
+      | SpecSharing (v0 , v2 , v3) =>
+          ( prettyPrintSelf buf v0
+          ; push buf "sharing" lineno
+          ; prettyPrintLongId buf v2
+          ; List.app (fn v4 =>
+              ( let val v6 = v4
+                  in push buf "=" lineno
+                  ; prettyPrintLongId buf v6
+                  end)) v3)
     end
   
   and prettyPrintSpecList buf
@@ -5156,16 +5179,16 @@ end = struct
     let val prettyPrintSelf = prettyPrintProg
     in
     case node of
-        ProgSemicolon =>
-          ( push buf ";" lineno)
-      | ProgSignature v1 =>
-          ( push buf "signature" lineno
-          ; prettyPrintSigBind buf v1)
+        ProgDec v0 =>
+          ( prettyPrintDec buf v0)
       | ProgFunctor v1 =>
           ( push buf "functor" lineno
           ; prettyPrintFctBind buf v1)
-      | ProgDec v0 =>
-          ( prettyPrintDec buf v0)
+      | ProgSignature v1 =>
+          ( push buf "signature" lineno
+          ; prettyPrintSigBind buf v1)
+      | ProgSemicolon =>
+          ( push buf ";" lineno)
     end
   
   and prettyPrintProgList buf
@@ -5183,23 +5206,7 @@ end = struct
     let val prettyPrintSelf = prettyPrintFctBind
     in
     case node of
-        FctBindOpened (v0 , v2 , v4 , v6 , v7) =>
-          ( prettyPrintId buf v0
-          ; push buf "(" lineno
-          ; prettyPrintSpec buf v2
-          ; push buf ")" lineno
-          ; (case v4 of NONE => ()
-              | SOME v5 =>
-              ( prettyPrintSigAnnot buf v5))
-          ; push buf "=" lineno
-          ; prettyPrintStr buf v6
-          ; (case v7 of NONE => ()
-              | SOME v8 =>
-              ( let val v10 = v8
-                  in push buf "and" lineno
-                  ; prettyPrintFctBind buf v10
-                  end)))
-      | FctBindPlain (v0 , v2 , v4 , v6 , v8 , v9) =>
+        FctBindPlain (v0 , v2 , v4 , v6 , v8 , v9) =>
           ( prettyPrintId buf v0
           ; push buf "(" lineno
           ; prettyPrintId buf v2
@@ -5216,6 +5223,22 @@ end = struct
               ( let val v12 = v10
                   in push buf "and" lineno
                   ; prettyPrintFctBind buf v12
+                  end)))
+      | FctBindOpened (v0 , v2 , v4 , v6 , v7) =>
+          ( prettyPrintId buf v0
+          ; push buf "(" lineno
+          ; prettyPrintSpec buf v2
+          ; push buf ")" lineno
+          ; (case v4 of NONE => ()
+              | SOME v5 =>
+              ( prettyPrintSigAnnot buf v5))
+          ; push buf "=" lineno
+          ; prettyPrintStr buf v6
+          ; (case v7 of NONE => ()
+              | SOME v8 =>
+              ( let val v10 = v8
+                  in push buf "and" lineno
+                  ; prettyPrintFctBind buf v10
                   end)))
     end
   
@@ -5247,6 +5270,7 @@ end = struct
   val prettyPrintCon = print prettyPrintCon
   val prettyPrintLab = print prettyPrintLab
   val prettyPrintLongId = print prettyPrintLongId
+  val prettyPrintAtomExp = print prettyPrintAtomExp
   val prettyPrintExp = print prettyPrintExp
   val prettyPrintExpListInner = print prettyPrintExpListInner
   val prettyPrintExpRow = print prettyPrintExpRow
@@ -5255,7 +5279,7 @@ end = struct
   val prettyPrintPat = print prettyPrintPat
   val prettyPrintPatListInner = print prettyPrintPatListInner
   val prettyPrintPatRow = print prettyPrintPatRow
-  val prettyPrintTypNoStar = print prettyPrintTypNoStar
+  val prettyPrintAtomTyp = print prettyPrintAtomTyp
   val prettyPrintTyp = print prettyPrintTyp
   val prettyPrintTypRow = print prettyPrintTypRow
   val prettyPrintDec = print prettyPrintDec
@@ -5286,4 +5310,41 @@ end = struct
   val prettyPrintFctBind = print prettyPrintFctBind
   val prettyPrintSigBind = print prettyPrintSigBind
   
+end
+
+functor SmlRepl (
+  structure Trivial : TERMINAL
+  structure Terminals : sig
+    structure Char : REPL_TERMINAL
+    structure Float : REPL_TERMINAL
+    structure Id : REPL_TERMINAL
+    structure Int : REPL_TERMINAL
+    structure String : REPL_TERMINAL
+    structure Tyvar : REPL_TERMINAL
+    structure Word : REPL_TERMINAL
+  end
+) :> sig val run : unit -> unit end = struct
+
+  structure Parser = SmlParser (
+    structure Trivial = Trivial
+    structure Terminals = Terminals
+  )
+  
+  structure Print = SmlPrint (
+    structure Ast = Parser
+    structure Terminals = Terminals
+  )
+  
+  structure Repl = Repl (
+    structure Result = struct
+      type t = Parser.sig_bind
+      type token_stream = Parser.token_stream
+      exception LexError = Parser.LexError
+      val lex = Parser.lex
+      val parse = Parser.parse Parser.parseSigBind
+      val print = Print.printSigBind
+    end
+  )
+  
+  val run = Repl.run
 end

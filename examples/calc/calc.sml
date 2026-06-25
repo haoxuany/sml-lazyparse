@@ -13,16 +13,17 @@ signature CALC_AST = sig
     | ExpDiv of exp * exp
     | ExpParens of exp
     | ExpNum of number annot
+  and repl' = ReplStmt of stmt
   withtype stmt = stmt' annot
   and exp = exp' annot
+  and repl = repl' annot
   
 end
 
 functor CalcParser (
-  structure Stream : STREAM
-  structure Trivial : TERMINAL where type 'a stream = 'a Stream.stream
+  structure Trivial : TERMINAL
   structure Terminals : sig
-    structure Number : TERMINAL where type 'a stream = 'a Stream.stream
+    structure Number : TERMINAL
   end
 ) :>
 sig
@@ -31,9 +32,11 @@ sig
   
   type 'a parser
   type token_stream
+  exception LexError of Char.char * Annot.pos
   val lex : Char.char Stream.stream -> Annot.pos -> token_stream
   val parseStmt : stmt parser
   val parseExp : exp parser
+  val parseRepl : repl parser
   val parse : 'a parser -> token_stream -> ('a * token_stream) list
 end =
 struct
@@ -49,21 +52,21 @@ struct
     | ExpDiv of exp * exp
     | ExpParens of exp
     | ExpNum of number annot
+  and repl' = ReplStmt of stmt
   withtype stmt = stmt' annot
   and exp = exp' annot
+  and repl = repl' annot
   
   datatype terminal_token = TerminalNumber of Terminals.Number.t
   
   structure Internal = ParseInternal (
-    structure Stream = Stream
     structure Trivial = Trivial
     structure Terminal = struct
       type t = terminal_token
-      type 'a stream = 'a Stream.stream
       val lex =
-        [ (fn (s , p) =>
-            case Terminals.Number.lex (s , p) of
-              SOME (v , s' , p') => SOME (TerminalNumber v , s' , p')
+        [ (fn ts =>
+            case Terminals.Number.lex ts of
+              SOME (v , ts') => SOME (TerminalNumber v , ts')
             | NONE => NONE)
         ]
     end
@@ -84,6 +87,7 @@ struct
   val parseTerminalNumber = parseTerminal (fn TerminalNumber v => SOME v)
     val parseStmtDummy : stmt t_dummy = dummy ()
     val parseExpDummy : exp t_dummy = dummy ()
+    val parseReplDummy : repl t_dummy = dummy ()
   
   val lex = lex
   
@@ -92,6 +96,11 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
+          val parseExp =
+            create StmtExp (
+              bind (parseNonterminal (deref parseExpDummy)) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
           val parseIfThenElse =
             create StmtIfThenElse (
               bind (keyword 7) (fn v0 =>
@@ -105,19 +114,14 @@ struct
               (fn v2 =>
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
-          val parseExp =
-            create StmtExp (
-              bind (parseNonterminal (deref parseExpDummy)) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
-  
         in either
-        [ parseIfThenElse
-        , parseExp
+        [ parseExp
+        , parseIfThenElse
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Exp *)
@@ -125,11 +129,6 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseNum =
-            create ExpNum (
-              bind (parseTerminalNumber) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
-  
           val parseParens =
             create ExpParens (
               bind (keyword 0) (fn v0 =>
@@ -137,21 +136,19 @@ struct
               bind (keyword 1) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
+          val parseNum =
+            create ExpNum (
+              bind (parseTerminalNumber) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
         in either
-        [ parseNum
-        , parseParens
+        [ parseParens
+        , parseNum
         ]
         end)
   
         val parseLevel2 = fix (fn parseLevel2 =>
         let
-          val parseDiv =
-            create ExpDiv (
-              bind (parseNonterminal parseLevel2) (fn v0 =>
-              bind (keyword 5) (fn v1 =>
-              bind (parseNonterminal (forget parseAtom)) (fn v2 =>
-              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
           val parseTimes =
             create ExpTimes (
               bind (parseNonterminal parseLevel2) (fn v0 =>
@@ -159,22 +156,22 @@ struct
               bind (parseNonterminal (forget parseAtom)) (fn v2 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
+          val parseDiv =
+            create ExpDiv (
+              bind (parseNonterminal parseLevel2) (fn v0 =>
+              bind (keyword 5) (fn v1 =>
+              bind (parseNonterminal (forget parseAtom)) (fn v2 =>
+              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+  
         in either
         [ (forget parseAtom)
-        , parseDiv
         , parseTimes
+        , parseDiv
         ]
         end)
   
         val parseLevel1 = fix (fn parseLevel1 =>
         let
-          val parseMinus =
-            create ExpMinus (
-              bind (parseNonterminal parseLevel1) (fn v0 =>
-              bind (keyword 4) (fn v1 =>
-              bind (parseNonterminal (forget parseLevel2)) (fn v2 =>
-              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
-  
           val parsePlus =
             create ExpPlus (
               bind (parseNonterminal parseLevel1) (fn v0 =>
@@ -182,20 +179,47 @@ struct
               bind (parseNonterminal (forget parseLevel2)) (fn v2 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
+          val parseMinus =
+            create ExpMinus (
+              bind (parseNonterminal parseLevel1) (fn v0 =>
+              bind (keyword 4) (fn v1 =>
+              bind (parseNonterminal (forget parseLevel2)) (fn v2 =>
+              return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
+  
         in either
         [ (forget parseLevel2)
-        , parseMinus
         , parsePlus
+        , parseMinus
         ]
         end)
   
       in
-        forget parseLevel1
+        longest (forget parseLevel1)
+      end
+  
+    (* Repl *)
+    val parseRepl =
+      let
+        val parseAtom = fix (fn parseAtom =>
+        let
+          val parseStmt =
+            create ReplStmt (
+              bind (parseNonterminal (deref parseStmtDummy)) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
+        in either
+        [ parseStmt
+        ]
+        end)
+  
+      in
+        longest (forget parseAtom)
       end
   
   
   val () = set parseStmtDummy parseStmt
   val () = set parseExpDummy parseExp
+  val () = set parseReplDummy parseRepl
   
   val parse = parser
 
@@ -211,9 +235,11 @@ sig
   val printNumber : Ast.number Ast.annot -> string
   val printStmt : Ast.stmt -> string
   val printExp : Ast.exp -> string
+  val printRepl : Ast.repl -> string
   val prettyPrintNumber : Ast.number Ast.annot -> string
   val prettyPrintStmt : Ast.stmt -> string
   val prettyPrintExp : Ast.exp -> string
+  val prettyPrintRepl : Ast.repl -> string
   
 end = struct
 
@@ -291,6 +317,16 @@ end = struct
           ; push buf ")" lineno
           )
   
+  and printRepl buf
+    ( { node , span = { start = { lineno , ... } , ... } } : repl ) =
+    case node of
+        ReplStmt v0 =>
+          ( push buf "ReplStmt" lineno
+          ; push buf "(" lineno
+          ; printStmt buf v0
+          ; push buf ")" lineno
+          )
+  
   
   fun print f = fn v =>
   let val buf = PrintBuffer.empty ()
@@ -300,6 +336,7 @@ end = struct
   val printNumber = print printNumber
   val printStmt = print printStmt
   val printExp = print printExp
+  val printRepl = print printRepl
   
   
   fun prettyPrintNumber buf
@@ -311,7 +348,9 @@ end = struct
     let val prettyPrintSelf = prettyPrintStmt
     in
     case node of
-        StmtIfThenElse (v1 , v2) =>
+        StmtExp v0 =>
+          ( prettyPrintExp buf v0)
+      | StmtIfThenElse (v1 , v2) =>
           ( push buf "if" lineno
           ; prettyPrintExp buf v1
           ; let val (v4 , v6) = v2
@@ -320,8 +359,6 @@ end = struct
               ; push buf "else" lineno
               ; prettyPrintStmt buf v6
               end)
-      | StmtExp v0 =>
-          ( prettyPrintExp buf v0)
     end
   
   and prettyPrintExp buf
@@ -329,33 +366,74 @@ end = struct
     let val prettyPrintSelf = prettyPrintExp
     in
     case node of
-        ExpNum v0 =>
-          ( prettyPrintNumber buf v0)
-      | ExpParens v1 =>
+        ExpParens v1 =>
           ( push buf "(" lineno
           ; prettyPrintExp buf v1
           ; push buf ")" lineno)
-      | ExpDiv (v0 , v2) =>
-          ( prettyPrintSelf buf v0
-          ; push buf "/" lineno
-          ; prettyPrintSelf buf v2)
+      | ExpNum v0 =>
+          ( prettyPrintNumber buf v0)
       | ExpTimes (v0 , v2) =>
           ( prettyPrintSelf buf v0
           ; push buf "*" lineno
           ; prettyPrintSelf buf v2)
-      | ExpMinus (v0 , v2) =>
+      | ExpDiv (v0 , v2) =>
           ( prettyPrintSelf buf v0
-          ; push buf "-" lineno
+          ; push buf "/" lineno
           ; prettyPrintSelf buf v2)
       | ExpPlus (v0 , v2) =>
           ( prettyPrintSelf buf v0
           ; push buf "+" lineno
           ; prettyPrintSelf buf v2)
+      | ExpMinus (v0 , v2) =>
+          ( prettyPrintSelf buf v0
+          ; push buf "-" lineno
+          ; prettyPrintSelf buf v2)
+    end
+  
+  and prettyPrintRepl buf
+    ( { node , span = { start = { lineno , ... } , ... } } : repl ) =
+    let val prettyPrintSelf = prettyPrintRepl
+    in
+    case node of
+        ReplStmt v0 =>
+          ( prettyPrintStmt buf v0)
     end
   
   
   val prettyPrintNumber = print prettyPrintNumber
   val prettyPrintStmt = print prettyPrintStmt
   val prettyPrintExp = print prettyPrintExp
+  val prettyPrintRepl = print prettyPrintRepl
   
+end
+
+functor CalcRepl (
+  structure Trivial : TERMINAL
+  structure Terminals : sig
+    structure Number : REPL_TERMINAL
+  end
+) :> sig val run : unit -> unit end = struct
+
+  structure Parser = CalcParser (
+    structure Trivial = Trivial
+    structure Terminals = Terminals
+  )
+  
+  structure Print = CalcPrint (
+    structure Ast = Parser
+    structure Terminals = Terminals
+  )
+  
+  structure Repl = Repl (
+    structure Result = struct
+      type t = Parser.repl
+      type token_stream = Parser.token_stream
+      exception LexError = Parser.LexError
+      val lex = Parser.lex
+      val parse = Parser.parse Parser.parseRepl
+      val print = Print.printRepl
+    end
+  )
+  
+  val run = Repl.run
 end

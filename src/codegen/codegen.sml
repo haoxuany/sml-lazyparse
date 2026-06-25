@@ -64,7 +64,7 @@ structure Codegen :
 
         fun varName v = String.concat ["v" , Int.toString v]
 
-        val terminalWhere = "TERMINAL where type 'a stream = 'a Stream.stream"
+        val terminalWhere = "TERMINAL"
 
         fun tyToString ty =
           case ty of
@@ -306,10 +306,10 @@ structure Codegen :
             ; print [inner , "in"]
             ; newline ()
             ; ( case levels of
-                  nil => print [body , "forget parseAtom"]
+                  nil => print [body , "longest (forget parseAtom)"]
                 | _ =>
                     let val { precedence , ... } : I.level = List.last levels
-                    in print [body , "forget parseLevel" , Int.toString precedence]
+                    in print [body , "longest (forget parseLevel" , Int.toString precedence , ")"]
                     end
               )
             ; newline ()
@@ -350,8 +350,6 @@ structure Codegen :
         ; openBox pp Vertical 2
         ; print ["functor " , toModuleCase name , "Parser ("]
         ; break ()
-        ; print ["structure Stream : STREAM"]
-        ; break ()
         ; print ["structure Trivial : " , terminalWhere]
         ; break ()
         ; openBox pp Vertical 2
@@ -386,6 +384,8 @@ structure Codegen :
         ; print ["type 'a parser"]
         ; break ()
         ; print ["type token_stream"]
+        ; break ()
+        ; print ["exception LexError of Char.char * Annot.pos"]
         ; break ()
         ; print ["val lex : Char.char Stream.stream -> Annot.pos -> token_stream"]
         ; break ()
@@ -441,16 +441,12 @@ structure Codegen :
           ; openBox pp Vertical 2
           ; print ["structure Internal = ParseInternal ("]
           ; break ()
-          ; print ["structure Stream = Stream"]
-          ; break ()
           ; print ["structure Trivial = Trivial"]
           ; break ()
           ; openBox pp Vertical 2
           ; print ["structure Terminal = struct"]
           ; break ()
           ; print ["type t = terminal_token"]
-          ; break ()
-          ; print ["type 'a stream = 'a Stream.stream"]
           ; break ()
           ; print ["val lex ="]
           ; break ()
@@ -463,11 +459,11 @@ structure Codegen :
                           val name = toModuleCase name
                           val prefix = if i = 0 then "  [ " else "  , "
                         in
-                          print [prefix , "(fn (s , p) =>"]
+                          print [prefix , "(fn ts =>"]
                           ; break ()
-                          ; print ["      case Terminals." , name , ".lex (s , p) of"]
+                          ; print ["      case Terminals." , name , ".lex ts of"]
                           ; break ()
-                          ; print ["        SOME (v , s' , p') => SOME (Terminal" , name , " v , s' , p')"]
+                          ; print ["        SOME (v , ts') => SOME (Terminal" , name , " v , ts')"]
                           ; break ()
                           ; print ["      | NONE => NONE)"]
                           ; break ()
@@ -910,6 +906,87 @@ structure Codegen :
                         ))
                       definitions
                 end
+            end
+        ; closeBox pp
+        ; break ()
+        ; print ["end"]
+
+        (* repl functor *)
+        ; break ()
+        ; break ()
+        ; openBox pp Vertical 2
+        ; print ["functor " , toModuleCase name , "Repl ("]
+        ; break ()
+        ; print ["structure Trivial : " , terminalWhere]
+        ; break ()
+        ; openBox pp Vertical 2
+        ; print ["structure Terminals : sig"]
+        ; List.app
+            (fn name =>
+              ( break ()
+              ; print ["structure " , toModuleCase name , " : REPL_TERMINAL"]
+              ))
+            terminalNames
+        ; closeBox pp
+        ; break ()
+        ; print ["end"]
+        ; closeBox pp
+        ; break ()
+        ; print [") :> sig val run : unit -> unit end = struct"]
+        ; break ()
+        ; openBox pp Vertical 2
+          ; break ()
+          ; openBox pp Vertical 2
+          ; print ["structure Parser = " , toModuleCase name , "Parser ("]
+          ; break ()
+          ; print ["structure Trivial = Trivial"]
+          ; break ()
+          ; print ["structure Terminals = Terminals"]
+          ; closeBox pp
+          ; break ()
+          ; print [")"]
+          ; break ()
+          ; break ()
+          ; openBox pp Vertical 2
+          ; print ["structure Print = " , toModuleCase name , "Print ("]
+          ; break ()
+          ; print ["structure Ast = Parser"]
+          ; break ()
+          ; print ["structure Terminals = Terminals"]
+          ; closeBox pp
+          ; break ()
+          ; print [")"]
+          ; break ()
+          ; break ()
+          ; let
+              val { name = defId , ... } : I.definition = List.last definitions
+            in
+              openBox pp Vertical 2
+              ; print ["structure Repl = Repl ("]
+              ; break ()
+              ; openBox pp Vertical 2
+              ; print ["structure Result = struct"]
+              ; break ()
+              ; print ["type t = Parser." , ntSnake defId]
+              ; break ()
+              ; print ["type token_stream = Parser.token_stream"]
+              ; break ()
+              ; print ["exception LexError = Parser.LexError"]
+              ; break ()
+              ; print ["val lex = Parser.lex"]
+              ; break ()
+              ; print ["val parse = Parser.parse Parser.parse" , ntModule defId]
+              ; break ()
+              ; print ["val print = Print.print" , ntModule defId]
+              ; closeBox pp
+              ; break ()
+              ; print ["end"]
+              ; closeBox pp
+              ; break ()
+              ; print [")"]
+              ; break ()
+              ; break ()
+              ; print ["val run = Repl.run"]
             end
         ; closeBox pp
         ; break ()

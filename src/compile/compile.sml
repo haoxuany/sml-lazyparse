@@ -180,13 +180,13 @@ structure Compile :
                     ( nil , IntMap.empty )
                     rules
 
-                val atoms = List.map compileRule nonfixRules
+                val atoms = List.map compileRule (List.rev nonfixRules)
 
                 val levels =
                   List.map
                     (fn ( prec , group ) =>
                       { precedence = prec
-                      , rules = List.map compileRule group
+                      , rules = List.map compileRule (List.rev group)
                       })
                     (List.rev (IntMap.toList fixityRules))
               in

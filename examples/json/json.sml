@@ -16,19 +16,20 @@ signature JSON_AST = sig
   and object' = ObjectObject of (member * member list) option
   and member' = MemberMember of string annot * value
   and array' = ArrayArray of (value * value list) option
+  and repl' = ReplValue of value
   withtype value = value' annot
   and object = object' annot
   and member = member' annot
   and array = array' annot
+  and repl = repl' annot
   
 end
 
 functor JsonParser (
-  structure Stream : STREAM
-  structure Trivial : TERMINAL where type 'a stream = 'a Stream.stream
+  structure Trivial : TERMINAL
   structure Terminals : sig
-    structure Number : TERMINAL where type 'a stream = 'a Stream.stream
-    structure String : TERMINAL where type 'a stream = 'a Stream.stream
+    structure Number : TERMINAL
+    structure String : TERMINAL
   end
 ) :>
 sig
@@ -38,11 +39,13 @@ sig
   
   type 'a parser
   type token_stream
+  exception LexError of Char.char * Annot.pos
   val lex : Char.char Stream.stream -> Annot.pos -> token_stream
   val parseValue : value parser
   val parseObject : object parser
   val parseMember : member parser
   val parseArray : array parser
+  val parseRepl : repl parser
   val parse : 'a parser -> token_stream -> ('a * token_stream) list
 end =
 struct
@@ -61,28 +64,28 @@ struct
   and object' = ObjectObject of (member * member list) option
   and member' = MemberMember of string annot * value
   and array' = ArrayArray of (value * value list) option
+  and repl' = ReplValue of value
   withtype value = value' annot
   and object = object' annot
   and member = member' annot
   and array = array' annot
+  and repl = repl' annot
   
   datatype terminal_token = TerminalNumber of Terminals.Number.t
   | TerminalString of Terminals.String.t
   
   structure Internal = ParseInternal (
-    structure Stream = Stream
     structure Trivial = Trivial
     structure Terminal = struct
       type t = terminal_token
-      type 'a stream = 'a Stream.stream
       val lex =
-        [ (fn (s , p) =>
-            case Terminals.Number.lex (s , p) of
-              SOME (v , s' , p') => SOME (TerminalNumber v , s' , p')
+        [ (fn ts =>
+            case Terminals.Number.lex ts of
+              SOME (v , ts') => SOME (TerminalNumber v , ts')
             | NONE => NONE)
-        , (fn (s , p) =>
-            case Terminals.String.lex (s , p) of
-              SOME (v , s' , p') => SOME (TerminalString v , s' , p')
+        , (fn ts =>
+            case Terminals.String.lex ts of
+              SOME (v , ts') => SOME (TerminalString v , ts')
             | NONE => NONE)
         ]
     end
@@ -106,6 +109,7 @@ struct
     val parseObjectDummy : object t_dummy = dummy ()
     val parseMemberDummy : member t_dummy = dummy ()
     val parseArrayDummy : array t_dummy = dummy ()
+    val parseReplDummy : repl t_dummy = dummy ()
   
   val lex = lex
   
@@ -114,29 +118,9 @@ struct
       let
         val parseAtom = fix (fn parseAtom =>
         let
-          val parseNull =
-            create (fn () => ValueNull) (
-              bind (keyword 5) (fn v0 =>
-              return_node () [ annot_add v0 ]))
-  
-          val parseFalse =
-            create (fn () => ValueFalse) (
-              bind (keyword 4) (fn v0 =>
-              return_node () [ annot_add v0 ]))
-  
-          val parseTrue =
-            create (fn () => ValueTrue) (
-              bind (keyword 6) (fn v0 =>
-              return_node () [ annot_add v0 ]))
-  
-          val parseArray =
-            create ValueArray (
-              bind (parseNonterminal (deref parseArrayDummy)) (fn v0 =>
-              return_node (#node v0) [ annot_add v0 ]))
-  
-          val parseObject =
-            create ValueObject (
-              bind (parseNonterminal (deref parseObjectDummy)) (fn v0 =>
+          val parseString =
+            create ValueString (
+              bind (parseTerminalString) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseNumber =
@@ -144,24 +128,44 @@ struct
               bind (parseTerminalNumber) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
-          val parseString =
-            create ValueString (
-              bind (parseTerminalString) (fn v0 =>
+          val parseObject =
+            create ValueObject (
+              bind (parseNonterminal (deref parseObjectDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
+          val parseArray =
+            create ValueArray (
+              bind (parseNonterminal (deref parseArrayDummy)) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
+          val parseTrue =
+            create (fn () => ValueTrue) (
+              bind (keyword 6) (fn v0 =>
+              return_node () [ annot_add v0 ]))
+  
+          val parseFalse =
+            create (fn () => ValueFalse) (
+              bind (keyword 4) (fn v0 =>
+              return_node () [ annot_add v0 ]))
+  
+          val parseNull =
+            create (fn () => ValueNull) (
+              bind (keyword 5) (fn v0 =>
+              return_node () [ annot_add v0 ]))
+  
         in either
-        [ parseNull
-        , parseFalse
-        , parseTrue
-        , parseArray
-        , parseObject
+        [ parseString
         , parseNumber
-        , parseString
+        , parseObject
+        , parseArray
+        , parseTrue
+        , parseFalse
+        , parseNull
         ]
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Object *)
@@ -196,7 +200,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Member *)
@@ -217,7 +221,7 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
       end
   
     (* Array *)
@@ -252,7 +256,26 @@ struct
         end)
   
       in
-        forget parseAtom
+        longest (forget parseAtom)
+      end
+  
+    (* Repl *)
+    val parseRepl =
+      let
+        val parseAtom = fix (fn parseAtom =>
+        let
+          val parseValue =
+            create ReplValue (
+              bind (parseNonterminal (deref parseValueDummy)) (fn v0 =>
+              return_node (#node v0) [ annot_add v0 ]))
+  
+        in either
+        [ parseValue
+        ]
+        end)
+  
+      in
+        longest (forget parseAtom)
       end
   
   
@@ -260,6 +283,7 @@ struct
   val () = set parseObjectDummy parseObject
   val () = set parseMemberDummy parseMember
   val () = set parseArrayDummy parseArray
+  val () = set parseReplDummy parseRepl
   
   val parse = parser
 
@@ -279,12 +303,14 @@ sig
   val printObject : Ast.object -> string
   val printMember : Ast.member -> string
   val printArray : Ast.array -> string
+  val printRepl : Ast.repl -> string
   val prettyPrintNumber : Ast.number Ast.annot -> string
   val prettyPrintString : Ast.string Ast.annot -> string
   val prettyPrintValue : Ast.value -> string
   val prettyPrintObject : Ast.object -> string
   val prettyPrintMember : Ast.member -> string
   val prettyPrintArray : Ast.array -> string
+  val prettyPrintRepl : Ast.repl -> string
   
 end = struct
 
@@ -369,6 +395,16 @@ end = struct
           ; push buf ")" lineno
           )
   
+  and printRepl buf
+    ( { node , span = { start = { lineno , ... } , ... } } : repl ) =
+    case node of
+        ReplValue v0 =>
+          ( push buf "ReplValue" lineno
+          ; push buf "(" lineno
+          ; printValue buf v0
+          ; push buf ")" lineno
+          )
+  
   
   fun print f = fn v =>
   let val buf = PrintBuffer.empty ()
@@ -381,6 +417,7 @@ end = struct
   val printObject = print printObject
   val printMember = print printMember
   val printArray = print printArray
+  val printRepl = print printRepl
   
   
   fun prettyPrintNumber buf
@@ -396,20 +433,20 @@ end = struct
     let val prettyPrintSelf = prettyPrintValue
     in
     case node of
-        ValueNull =>
-          ( push buf "null" lineno)
-      | ValueFalse =>
-          ( push buf "false" lineno)
-      | ValueTrue =>
-          ( push buf "true" lineno)
-      | ValueArray v0 =>
-          ( prettyPrintArray buf v0)
-      | ValueObject v0 =>
-          ( prettyPrintObject buf v0)
+        ValueString v0 =>
+          ( prettyPrintString buf v0)
       | ValueNumber v0 =>
           ( prettyPrintNumber buf v0)
-      | ValueString v0 =>
-          ( prettyPrintString buf v0)
+      | ValueObject v0 =>
+          ( prettyPrintObject buf v0)
+      | ValueArray v0 =>
+          ( prettyPrintArray buf v0)
+      | ValueTrue =>
+          ( push buf "true" lineno)
+      | ValueFalse =>
+          ( push buf "false" lineno)
+      | ValueNull =>
+          ( push buf "null" lineno)
     end
   
   and prettyPrintObject buf
@@ -463,6 +500,15 @@ end = struct
           ; push buf "]" lineno)
     end
   
+  and prettyPrintRepl buf
+    ( { node , span = { start = { lineno , ... } , ... } } : repl ) =
+    let val prettyPrintSelf = prettyPrintRepl
+    in
+    case node of
+        ReplValue v0 =>
+          ( prettyPrintValue buf v0)
+    end
+  
   
   val prettyPrintNumber = print prettyPrintNumber
   val prettyPrintString = print prettyPrintString
@@ -470,5 +516,38 @@ end = struct
   val prettyPrintObject = print prettyPrintObject
   val prettyPrintMember = print prettyPrintMember
   val prettyPrintArray = print prettyPrintArray
+  val prettyPrintRepl = print prettyPrintRepl
   
+end
+
+functor JsonRepl (
+  structure Trivial : TERMINAL
+  structure Terminals : sig
+    structure Number : REPL_TERMINAL
+    structure String : REPL_TERMINAL
+  end
+) :> sig val run : unit -> unit end = struct
+
+  structure Parser = JsonParser (
+    structure Trivial = Trivial
+    structure Terminals = Terminals
+  )
+  
+  structure Print = JsonPrint (
+    structure Ast = Parser
+    structure Terminals = Terminals
+  )
+  
+  structure Repl = Repl (
+    structure Result = struct
+      type t = Parser.repl
+      type token_stream = Parser.token_stream
+      exception LexError = Parser.LexError
+      val lex = Parser.lex
+      val parse = Parser.parse Parser.parseRepl
+      val print = Print.printRepl
+    end
+  )
+  
+  val run = Repl.run
 end
