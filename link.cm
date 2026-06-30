@@ -1,29 +1,24 @@
 Library
+  (* This is from cmlib *)
   structure Stream
+
   structure Annot
-  functor TaggedStream
+
   structure LexStream
   structure Regex
+
   structure LexCommon
-  functor LexInternal
+
   structure ParseError
+
   functor ParseInternal
+
   structure PrintBuffer
+
   functor Repl
+
   signature TERMINAL
   signature PRINT_TERMINAL
   signature REPL_TERMINAL
 is
-  ../../lib/cmlib/cmlib.cm
-  ../../lib/sml-parcom/parcom.cm
-
-  annot.sml
-  stream.sml
-  regex.sml
-  lex_common.sml
-  lex_internal.sml
-  parse_error.sml
-  parse_internal.sml
-  print_buffer.sml
-  repl.sml
-  terminal.sig.sml
+  src/link/sources.cm

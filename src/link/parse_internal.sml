@@ -5,12 +5,17 @@ functor ParseInternal (
   structure Terminal : sig
     type t
 
+    (* for error reporting *)
+    val name : t -> string
+
     val lex : (LexStream.stream -> (t * LexStream.stream) option) list
   end
   val keywords : (string * int) list
 ) = struct
 
   type 'a annot = { node : 'a , span : Annot.span }
+
+  fun impossible () = raise Fail "Impossible"
 
   structure LexInternal = LexInternal (
     structure Keyword = struct
@@ -21,7 +26,25 @@ functor ParseInternal (
     structure Terminal = Terminal
   )
 
-  structure Parcom = Parcom (
+  datatype internal_error =
+    InternalErrorUnexpectedEOF
+  | InternalErrorUnknown (* internal *)
+  | InternalErrorExpectedKeyword of int
+  | InternalErrorExpectedTerminal of string
+
+  type internal_error = 
+    { sort : string option
+    , rule : string option
+    , error : internal_error
+    }
+
+  fun newerror error : internal_error =
+    { sort = NONE
+    , rule = NONE
+    , error = error
+    }
+
+  structure Parcom = ParcomError (
     structure TokenStream = struct
       structure TS = LexInternal.TokenStream
       type token = LexInternal.token
@@ -33,33 +56,43 @@ functor ParseInternal (
           TS.Nil => Nil
         | TS.Cons (h, t) => Cons (h, t)
     end
+    structure ParseError = struct
+      type t = internal_error
+      val unexpected_eof =
+        newerror InternalErrorUnexpectedEOF
+    end
   )
 
   open Parcom
 
-  val skipTrivial = starLongest (remove (fn
-    LexInternal.TokenTrivial _ => true
-  | _ => false))
+  val skipTrivial = starLongest (terminal (fn
+    LexInternal.TokenTrivial _ => ParseSuccess ()
+  | _ => ParseFailure (newerror InternalErrorUnknown)))
 
   fun keyword k =
     bind skipTrivial (fn _ =>
       terminal (fn
         LexInternal.TokenKeyword (k' , sp) =>
           if k = k'
-          then SOME { node = () , span = sp }
-          else NONE
-      | _ => NONE)
+          then ParseSuccess { node = () , span = sp }
+          else ParseFailure
+            (newerror (InternalErrorExpectedKeyword k))
+      | _ => ParseFailure
+        (newerror (InternalErrorExpectedKeyword k)))
     )
 
-  fun parseTerminal proj =
+  fun parseTerminal proj name =
     bind skipTrivial (fn _ =>
       terminal (fn
         LexInternal.TokenOther (v , sp) =>
           (case proj v of
             SOME t =>
-              SOME { node = { node = t , span = sp } , span = sp }
-          | NONE => NONE)
-      | _ => NONE)
+              ParseSuccess { node = { node = t , span = sp } , span = sp }
+          | NONE => ParseFailure 
+            (newerror (InternalErrorExpectedTerminal name))
+          )
+      | _ => ParseFailure
+        (newerror (InternalErrorExpectedTerminal name)))
     )
 
   (* In the case of empty parse, recover span from stream position *)
@@ -68,7 +101,7 @@ functor ParseInternal (
     let
       val pos = LexInternal.TokenStream.pos s
     in
-      SOME
+      ParseSuccess
       ( { node = node , span = Annot.span pos pos } , 0 , s )
     end
     )
@@ -85,7 +118,7 @@ functor ParseInternal (
 
   fun annot_list (l : Annot.span list) : Annot.span =
     case l of
-      nil => raise Fail "Impossible"
+      nil => impossible ()
     | first :: rest =>
         List.foldl
         (fn ( new , { start , finish } ) =>
@@ -168,6 +201,108 @@ functor ParseInternal (
   fun annot_add ({ span , ... } : 'a annot)
     : Annot.span = span
 
-  val create = map
+  fun create rule_construct sort rule node = 
+    mapError 
+    (fn ({ error , ... } : internal_error) =>
+      { sort = SOME sort 
+      , rule = SOME rule 
+      , error = error })
+    (map rule_construct node)
+
+  datatype 'a result =
+    Success of ('a * token_stream) list
+  | Fail of ParseError.t
+
+  structure TS = LexInternal.TokenStream
+
+  structure IntDict = SplayDict (structure Key = IntOrdered)
+
+  val keywordDict =
+    List.foldr (fn ( (s , i) , d ) =>
+      IntDict.insert d i s 
+    ) IntDict.empty keywords
+
+  fun parse p stream =
+    case parser p stream of
+      ResultSuccess v => Success v
+    | ResultFailure errors =>
+        let
+          val ({ sort , rule , error } , stream) = List.hd errors
+          (* In generated code, these really should just exist due
+          * to the map. *)
+          val sort = case sort of SOME v => v | NONE => "(unknown)"
+          val rulename =
+            case rule of SOME v => v | NONE => "(unknown)"
+
+          fun next s =
+            case TS.front s of
+              TS.Nil => ( NONE , TS.pos s )
+            | TS.Cons ( v , s ) =>
+                (case v of
+                  LexInternal.TokenTrivial _ => next s
+                | LexInternal.TokenKeyword ( i , span ) =>
+                    ( SOME ( IntDict.lookup keywordDict i ) 
+                    , #start span 
+                    )
+                | LexInternal.TokenOther ( term , span ) =>
+                    ( SOME ( Terminal.name term ) 
+                    , #start span 
+                    )
+                )
+
+          val ( actual , pos ) = next stream
+        in
+          Fail (
+          case error of
+            InternalErrorUnexpectedEOF =>
+              ParseError.UnexpectedEOF
+              { sort = sort
+              , rulename = rulename
+              , pos = pos
+              }
+          | InternalErrorUnknown => impossible ()
+          | InternalErrorExpectedKeyword k =>
+              ParseError.ExpectedKeyword
+              { sort = sort
+              , rulename = rulename
+              , keyword = IntDict.lookup keywordDict k
+              , actual = case actual of SOME s => s | NONE => "(eof)"
+              , pos = pos
+              }
+          | InternalErrorExpectedTerminal name =>
+              ParseError.ExpectedTerminal
+              { sort = sort
+              , rulename = rulename
+              , terminal = name
+              , actual = case actual of SOME s => s | NONE => "(eof)"
+              , pos = pos
+              }
+          )
+        end
+
+  (* Have some way of working with token streams externally *)
+  structure TokenStream = struct
+    type t = token_stream
+    datatype token =
+      Keyword of string * Annot.span
+    | Terminal of Terminal.t * Annot.span
+
+    datatype front = Nil | Cons of token * t
+
+    fun front (s : token_stream) : front =
+      case TS.front s of
+        TS.Nil => Nil
+      | TS.Cons ( v , s ) =>
+          (case v of
+            LexInternal.TokenTrivial _ => front s
+          | LexInternal.TokenKeyword ( i , span ) =>
+              Cons ( Keyword ( IntDict.lookup keywordDict i , span ) , s )
+          | LexInternal.TokenOther ( term , span ) =>
+              Cons ( Terminal ( term , span ) , s )
+          )
+
+    fun pos (s : token_stream) : Annot.pos = 
+      LexInternal.TokenStream.pos s
+  end
 
 end

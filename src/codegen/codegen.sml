@@ -206,7 +206,7 @@ structure Codegen :
                 nil => String.concat ["(fn () => " , conName , ")"]
               | _ => conName
           in
-            print [indent , "create " , conExpr , " ("]
+            print [indent , "create " , conExpr , " \"" , ntName defId , "\" \"" , name , "\" ("]
             ; newline ()
             ; emitCmdBody (indent ^ "  ") selfRef higherRef cmd
             ; print [")"]
@@ -320,6 +320,7 @@ structure Codegen :
 
       in
         openBox pp Vertical 0
+        ; newline ()
 
         (* AST signature *)
         ; openBox pp Vertical 2
@@ -383,11 +384,55 @@ structure Codegen :
         ; break ()
         ; print ["type 'a parser"]
         ; break ()
-        ; print ["type token_stream"]
+        ; break ()
+        ; ( case terminalNames of
+              nil => ()
+            | first :: rest =>
+                ( print
+                  [ "datatype terminal_token = Terminal"
+                  , toModuleCase first , " of "
+                  , toSnakeCase first]
+                ; List.app
+                    (fn name =>
+                      ( break ()
+                      ; print
+                        [ "| Terminal"
+                        , toModuleCase name
+                        , " of "
+                        , toSnakeCase name]
+                      ))
+                    rest
+                ; break ()
+                ; break ()
+                )
+          )
+        ; openBox pp Vertical 2
+        ; print ["structure TokenStream : sig"]
+        ; break ()
+        ; print ["type t"]
+        ; break ()
+        ; print ["datatype token ="]
+        ; break ()
+        ; print ["  Keyword of String.string * Annot.span"]
+        ; break ()
+        ; print ["| Terminal of terminal_token * Annot.span"]
+        ; break ()
+        ; break ()
+        ; print ["datatype front = Nil | Cons of token * t"]
+        ; break ()
+        ; print ["val front : t -> front"]
+        ; break ()
+        ; break ()
+        ; print ["val pos : t -> Annot.pos"]
+        ; closeBox pp
+        ; break ()
+        ; print ["end"]
+        ; break ()
         ; break ()
         ; print ["exception LexError of Char.char * Annot.pos"]
         ; break ()
-        ; print ["val lex : Char.char Stream.stream -> Annot.pos -> token_stream"]
+        ; print ["val lex : Char.char Stream.stream -> Annot.pos -> TokenStream.t"]
+        ; break ()
         ; break ()
         ; List.app
             (fn { name , ... } : I.definition =>
@@ -395,7 +440,15 @@ structure Codegen :
               ; break ()
               ))
             definitions
-        ; print ["val parse : 'a parser -> token_stream -> ('a * token_stream) list"]
+        ; break ()
+        ; print ["datatype 'a result ="]
+        ; break ()
+        ; print ["  Success of ('a * TokenStream.t) list"]
+        ; break ()
+        ; print ["| Fail of ParseError.t"]
+        ; break ()
+        ; print ["val parse : 'a parser -> TokenStream.t -> 'a result"]
+        ; break ()
         ; closeBox pp
         ; break ()
         ; print ["end ="]
@@ -448,6 +501,26 @@ structure Codegen :
           ; break ()
           ; print ["type t = terminal_token"]
           ; break ()
+          ; ( case terminalNames of
+                nil =>
+                  ( print ["fun name _ = \"\""]
+                  ; break ()
+                  )
+              | _ =>
+                  ( print ["val name = fn v => (case v of"]
+                  ; break ()
+                  ; List.appi
+                      (fn ( i , name ) =>
+                        let val prefix = if i = 0 then "  " else "| "
+                        in
+                          print [prefix , "Terminal" , toModuleCase name , " _ => \"" , name , "\""]
+                          ; break ()
+                        end)
+                      terminalNames
+                  ; print [")"]
+                  ; break ()
+                  )
+            )
           ; print ["val lex ="]
           ; break ()
           ; ( case terminalNames of
@@ -502,13 +575,13 @@ structure Codegen :
           ; List.app
               (fn name =>
                 let
-                  val name = toModuleCase name
+                  val moduleName = toModuleCase name
                   val proj =
                     if List.length terminalNames = 1
-                    then String.concat ["(fn Terminal" , name , " v => SOME v)"]
-                    else String.concat ["(fn Terminal" , name , " v => SOME v | _ => NONE)"]
+                    then String.concat ["(fn Terminal" , moduleName , " v => SOME v)"]
+                    else String.concat ["(fn Terminal" , moduleName , " v => SOME v | _ => NONE)"]
                 in
-                  print ["val parseTerminal" , name , " = parseTerminal " , proj]
+                  print ["val parseTerminal" , moduleName , " = parseTerminal " , proj , " \"" , name , "\""]
                   ; break ()
                 end)
               terminalNames
@@ -531,7 +604,7 @@ structure Codegen :
                 ))
               definitions
           ; break ()
-          ; print ["val parse = parser"]
+          ; print ["val parse = parse"]
         ; closeBox pp
         ; break ()
         ; break ()
@@ -563,6 +636,7 @@ structure Codegen :
         ; openBox pp Vertical 2
         ; print ["sig"]
         ; break ()
+        ; break ()
         ; List.app
             (fn name =>
               ( print ["val print" , toModuleCase name , " : Ast." , toSnakeCase name , " Ast.annot -> string"]
@@ -575,6 +649,7 @@ structure Codegen :
               ; break ()
               ))
             datatypes
+        ; break ()
         ; List.app
             (fn name =>
               ( print ["val prettyPrint" , toModuleCase name , " : Ast." , toSnakeCase name , " Ast.annot -> string"]
@@ -932,7 +1007,11 @@ structure Codegen :
         ; print ["end"]
         ; closeBox pp
         ; break ()
-        ; print [") :> sig val run : unit -> unit end = struct"]
+        ; print [") :> sig"]
+        ; break ()
+        ; print ["  val run : unit -> unit"] 
+        ; break ()
+        ; print ["end = struct"]
         ; break ()
         ; openBox pp Vertical 2
           ; break ()
@@ -967,15 +1046,13 @@ structure Codegen :
               ; openBox pp Vertical 2
               ; print ["structure Result = struct"]
               ; break ()
-              ; print ["type t = Parser." , ntSnake defId]
+              ; print ["open Parser"]
               ; break ()
-              ; print ["type token_stream = Parser.token_stream"]
+              ; print ["type token_stream = TokenStream.t"]
               ; break ()
-              ; print ["exception LexError = Parser.LexError"]
+              ; print ["type t = " , ntSnake defId]
               ; break ()
-              ; print ["val lex = Parser.lex"]
-              ; break ()
-              ; print ["val parse = Parser.parse Parser.parse" , ntModule defId]
+              ; print ["val parse = parse parse" , ntModule defId]
               ; break ()
               ; print ["val print = Print.print" , ntModule defId]
               ; closeBox pp

@@ -4,14 +4,18 @@ functor Repl (
     type t
     type token_stream
 
+    datatype 'a result =
+      Success of ('a * token_stream) list
+    | Fail of ParseError.t
+
     exception LexError of char * Annot.pos
 
     val lex : Char.char Stream.stream -> Annot.pos -> token_stream
-    val parse : token_stream -> (t * token_stream) list
+    val parse : token_stream -> t result
     val print : t -> string
   end
 ) = struct
-  
+
   structure R = Result
 
   fun run () =
@@ -55,13 +59,19 @@ functor Repl (
                 val tokens = R.lex (Stream.fromString input) Annot.empty
                 val results = R.parse tokens
               in
-                print (String.concat
-                  [ "parses (" , Int.toString (List.length results) , "): \n" ]
-                );
-                List.appi
-                  (fn ( i , ( result , _ ) ) =>
-                    print (String.concat [ Int.toString i , ". " , R.print result , "\n" ]))
-                  results;
+                case results of
+                  R.Success parses =>
+                    ( print (String.concat
+                        [ "parses (" , Int.toString (List.length parses) , "): \n" ])
+                    ; List.appi
+                        (fn ( i , ( result , _ ) ) =>
+                          print (String.concat [ Int.toString i , ". " , R.print result , "\n" ]))
+                        parses
+                    )
+                | R.Fail error =>
+                    ( print "parse error:\n"
+                    ; print (String.concat [ "  " , ParseError.show error , "\n" ])
+                    );
                 loop ()
               end
               handle R.LexError (c , pos) =>
@@ -81,7 +91,7 @@ functor Repl (
                 end
         )
     in
-      print 
+      print
       "Use \\ to continue string in new line at EOL and \\\\ for the literal backslash at EOL" ;
       print "\n";
       loop ()

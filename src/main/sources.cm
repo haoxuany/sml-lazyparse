@@ -1,6 +1,5 @@
 group is
 
-  $/ml-lpt-lib.cm
   ../../lib/cmlib/cmlib.cm
 
   ../ast/sources.cm

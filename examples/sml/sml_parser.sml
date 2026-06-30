@@ -171,11 +171,16 @@ structure SmlParser = struct
       val results = parse parseDecList tokens
     in
       print (S.concat ["input: " , input , "\n"]);
-      print (S.concat ["parses: " , Int.toString (List.length results) , "\n"]);
-      List.app
-        (fn (result , _) =>
-          print (S.concat ["  " , Print.printDecList result , "\n"]))
-        results
+      case results of
+        Success parses =>
+          ( print (S.concat ["parses: " , Int.toString (List.length parses) , "\n"])
+          ; List.app
+              (fn (result , _) =>
+                print (S.concat ["  " , Print.printDecList result , "\n"]))
+              parses
+          )
+      | Fail error =>
+          print (S.concat ["parse error: " , ParseError.show error , "\n"])
     end
 
   fun runExp input =
@@ -184,11 +189,16 @@ structure SmlParser = struct
       val results = parse parseExp tokens
     in
       print (S.concat ["input: " , input , "\n"]);
-      print (S.concat ["parses: " , Int.toString (List.length results) , "\n"]);
-      List.app
-        (fn (result , _) =>
-          print (S.concat ["  " , Print.printExp result , "\n"]))
-        results
+      case results of
+        Success parses =>
+          ( print (S.concat ["parses: " , Int.toString (List.length parses) , "\n"])
+          ; List.app
+              (fn (result , _) =>
+                print (S.concat ["  " , Print.printExp result , "\n"]))
+              parses
+          )
+      | Fail error =>
+          print (S.concat ["parse error: " , ParseError.show error , "\n"])
     end
 
   fun runProg input =
@@ -197,10 +207,15 @@ structure SmlParser = struct
       val results = parse parseProgList tokens
     in
       print (S.concat ["input: " , input , "\n"]);
-      print (S.concat ["parses: " , Int.toString (List.length results) , "\n"]);
-      List.app
-        (fn (result , _) =>
-          print (S.concat ["  " , Print.printProgList result , "\n"]))
-        results
+      case results of
+        Success parses =>
+          ( print (S.concat ["parses: " , Int.toString (List.length parses) , "\n"])
+          ; List.app
+              (fn (result , _) =>
+                print (S.concat ["  " , Print.printProgList result , "\n"]))
+              parses
+          )
+      | Fail error =>
+          print (S.concat ["parse error: " , ParseError.show error , "\n"])
     end
 end

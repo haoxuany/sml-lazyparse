@@ -1,3 +1,4 @@
+
 signature JSON_AST = sig
   type 'a annot = { node : 'a , span : Annot.span }
   
@@ -38,15 +39,36 @@ sig
   where type string = Terminals.String.t
   
   type 'a parser
-  type token_stream
+  
+  datatype terminal_token = TerminalNumber of number
+  | TerminalString of string
+  
+  structure TokenStream : sig
+    type t
+    datatype token =
+      Keyword of String.string * Annot.span
+    | Terminal of terminal_token * Annot.span
+    
+    datatype front = Nil | Cons of token * t
+    val front : t -> front
+    
+    val pos : t -> Annot.pos
+  end
+  
   exception LexError of Char.char * Annot.pos
-  val lex : Char.char Stream.stream -> Annot.pos -> token_stream
+  val lex : Char.char Stream.stream -> Annot.pos -> TokenStream.t
+  
   val parseValue : value parser
   val parseObject : object parser
   val parseMember : member parser
   val parseArray : array parser
   val parseRepl : repl parser
-  val parse : 'a parser -> token_stream -> ('a * token_stream) list
+  
+  datatype 'a result =
+    Success of ('a * TokenStream.t) list
+  | Fail of ParseError.t
+  val parse : 'a parser -> TokenStream.t -> 'a result
+  
 end =
 struct
 
@@ -78,6 +100,10 @@ struct
     structure Trivial = Trivial
     structure Terminal = struct
       type t = terminal_token
+      val name = fn v => (case v of
+        TerminalNumber _ => "number"
+      | TerminalString _ => "string"
+      )
       val lex =
         [ (fn ts =>
             case Terminals.Number.lex ts of
@@ -103,8 +129,8 @@ struct
   )
   open Internal
   
-  val parseTerminalNumber = parseTerminal (fn TerminalNumber v => SOME v | _ => NONE)
-  val parseTerminalString = parseTerminal (fn TerminalString v => SOME v | _ => NONE)
+  val parseTerminalNumber = parseTerminal (fn TerminalNumber v => SOME v | _ => NONE) "number"
+  val parseTerminalString = parseTerminal (fn TerminalString v => SOME v | _ => NONE) "string"
     val parseValueDummy : value t_dummy = dummy ()
     val parseObjectDummy : object t_dummy = dummy ()
     val parseMemberDummy : member t_dummy = dummy ()
@@ -119,37 +145,37 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseString =
-            create ValueString (
+            create ValueString "Value" "String" (
               bind (parseTerminalString) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseNumber =
-            create ValueNumber (
+            create ValueNumber "Value" "Number" (
               bind (parseTerminalNumber) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseObject =
-            create ValueObject (
+            create ValueObject "Value" "Object" (
               bind (parseNonterminal (deref parseObjectDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseArray =
-            create ValueArray (
+            create ValueArray "Value" "Array" (
               bind (parseNonterminal (deref parseArrayDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseTrue =
-            create (fn () => ValueTrue) (
+            create (fn () => ValueTrue) "Value" "True" (
               bind (keyword 6) (fn v0 =>
               return_node () [ annot_add v0 ]))
   
           val parseFalse =
-            create (fn () => ValueFalse) (
+            create (fn () => ValueFalse) "Value" "False" (
               bind (keyword 4) (fn v0 =>
               return_node () [ annot_add v0 ]))
   
           val parseNull =
-            create (fn () => ValueNull) (
+            create (fn () => ValueNull) "Value" "Null" (
               bind (keyword 5) (fn v0 =>
               return_node () [ annot_add v0 ]))
   
@@ -174,7 +200,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseObject =
-            create ObjectObject (
+            create ObjectObject "Object" "Object" (
               bind (keyword 7) (fn v0 =>
               bind (optionalLongest (
                 bind (
@@ -209,7 +235,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseMember =
-            create MemberMember (
+            create MemberMember "Member" "Member" (
               bind (parseTerminalString) (fn v0 =>
               bind (keyword 1) (fn v1 =>
               bind (parseNonterminal (deref parseValueDummy)) (fn v2 =>
@@ -230,7 +256,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseArray =
-            create ArrayArray (
+            create ArrayArray "Array" "Array" (
               bind (keyword 2) (fn v0 =>
               bind (optionalLongest (
                 bind (
@@ -265,7 +291,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseValue =
-            create ReplValue (
+            create ReplValue "Repl" "Value" (
               bind (parseNonterminal (deref parseValueDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
@@ -285,7 +311,7 @@ struct
   val () = set parseArrayDummy parseArray
   val () = set parseReplDummy parseRepl
   
-  val parse = parser
+  val parse = parse
 
 end
 
@@ -297,6 +323,7 @@ functor JsonPrint (
   end
 ) :>
 sig
+  
   val printNumber : Ast.number Ast.annot -> string
   val printString : Ast.string Ast.annot -> string
   val printValue : Ast.value -> string
@@ -304,6 +331,7 @@ sig
   val printMember : Ast.member -> string
   val printArray : Ast.array -> string
   val printRepl : Ast.repl -> string
+  
   val prettyPrintNumber : Ast.number Ast.annot -> string
   val prettyPrintString : Ast.string Ast.annot -> string
   val prettyPrintValue : Ast.value -> string
@@ -526,7 +554,9 @@ functor JsonRepl (
     structure Number : REPL_TERMINAL
     structure String : REPL_TERMINAL
   end
-) :> sig val run : unit -> unit end = struct
+) :> sig
+  val run : unit -> unit
+end = struct
 
   structure Parser = JsonParser (
     structure Trivial = Trivial
@@ -540,11 +570,10 @@ functor JsonRepl (
   
   structure Repl = Repl (
     structure Result = struct
-      type t = Parser.repl
-      type token_stream = Parser.token_stream
-      exception LexError = Parser.LexError
-      val lex = Parser.lex
-      val parse = Parser.parse Parser.parseRepl
+      open Parser
+      type token_stream = TokenStream.t
+      type t = repl
+      val parse = parse parseRepl
       val print = Print.printRepl
     end
   )

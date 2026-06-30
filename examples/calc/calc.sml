@@ -1,3 +1,4 @@
+
 signature CALC_AST = sig
   type 'a annot = { node : 'a , span : Annot.span }
   
@@ -31,13 +32,33 @@ sig
   where type number = Terminals.Number.t
   
   type 'a parser
-  type token_stream
+  
+  datatype terminal_token = TerminalNumber of number
+  
+  structure TokenStream : sig
+    type t
+    datatype token =
+      Keyword of String.string * Annot.span
+    | Terminal of terminal_token * Annot.span
+    
+    datatype front = Nil | Cons of token * t
+    val front : t -> front
+    
+    val pos : t -> Annot.pos
+  end
+  
   exception LexError of Char.char * Annot.pos
-  val lex : Char.char Stream.stream -> Annot.pos -> token_stream
+  val lex : Char.char Stream.stream -> Annot.pos -> TokenStream.t
+  
   val parseStmt : stmt parser
   val parseExp : exp parser
   val parseRepl : repl parser
-  val parse : 'a parser -> token_stream -> ('a * token_stream) list
+  
+  datatype 'a result =
+    Success of ('a * TokenStream.t) list
+  | Fail of ParseError.t
+  val parse : 'a parser -> TokenStream.t -> 'a result
+  
 end =
 struct
 
@@ -63,6 +84,9 @@ struct
     structure Trivial = Trivial
     structure Terminal = struct
       type t = terminal_token
+      val name = fn v => (case v of
+        TerminalNumber _ => "number"
+      )
       val lex =
         [ (fn ts =>
             case Terminals.Number.lex ts of
@@ -84,7 +108,7 @@ struct
   )
   open Internal
   
-  val parseTerminalNumber = parseTerminal (fn TerminalNumber v => SOME v)
+  val parseTerminalNumber = parseTerminal (fn TerminalNumber v => SOME v) "number"
     val parseStmtDummy : stmt t_dummy = dummy ()
     val parseExpDummy : exp t_dummy = dummy ()
     val parseReplDummy : repl t_dummy = dummy ()
@@ -97,12 +121,12 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseExp =
-            create StmtExp (
+            create StmtExp "Stmt" "Exp" (
               bind (parseNonterminal (deref parseExpDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseIfThenElse =
-            create StmtIfThenElse (
+            create StmtIfThenElse "Stmt" "IfThenElse" (
               bind (keyword 7) (fn v0 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
               bind (
@@ -130,14 +154,14 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseParens =
-            create ExpParens (
+            create ExpParens "Exp" "Parens" (
               bind (keyword 0) (fn v0 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
               bind (keyword 1) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseNum =
-            create ExpNum (
+            create ExpNum "Exp" "Num" (
               bind (parseTerminalNumber) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
@@ -150,14 +174,14 @@ struct
         val parseLevel2 = fix (fn parseLevel2 =>
         let
           val parseTimes =
-            create ExpTimes (
+            create ExpTimes "Exp" "Times" (
               bind (parseNonterminal parseLevel2) (fn v0 =>
               bind (keyword 2) (fn v1 =>
               bind (parseNonterminal (forget parseAtom)) (fn v2 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseDiv =
-            create ExpDiv (
+            create ExpDiv "Exp" "Div" (
               bind (parseNonterminal parseLevel2) (fn v0 =>
               bind (keyword 5) (fn v1 =>
               bind (parseNonterminal (forget parseAtom)) (fn v2 =>
@@ -173,14 +197,14 @@ struct
         val parseLevel1 = fix (fn parseLevel1 =>
         let
           val parsePlus =
-            create ExpPlus (
+            create ExpPlus "Exp" "Plus" (
               bind (parseNonterminal parseLevel1) (fn v0 =>
               bind (keyword 3) (fn v1 =>
               bind (parseNonterminal (forget parseLevel2)) (fn v2 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseMinus =
-            create ExpMinus (
+            create ExpMinus "Exp" "Minus" (
               bind (parseNonterminal parseLevel1) (fn v0 =>
               bind (keyword 4) (fn v1 =>
               bind (parseNonterminal (forget parseLevel2)) (fn v2 =>
@@ -203,7 +227,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseStmt =
-            create ReplStmt (
+            create ReplStmt "Repl" "Stmt" (
               bind (parseNonterminal (deref parseStmtDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
@@ -221,7 +245,7 @@ struct
   val () = set parseExpDummy parseExp
   val () = set parseReplDummy parseRepl
   
-  val parse = parser
+  val parse = parse
 
 end
 
@@ -232,10 +256,12 @@ functor CalcPrint (
   end
 ) :>
 sig
+  
   val printNumber : Ast.number Ast.annot -> string
   val printStmt : Ast.stmt -> string
   val printExp : Ast.exp -> string
   val printRepl : Ast.repl -> string
+  
   val prettyPrintNumber : Ast.number Ast.annot -> string
   val prettyPrintStmt : Ast.stmt -> string
   val prettyPrintExp : Ast.exp -> string
@@ -412,7 +438,9 @@ functor CalcRepl (
   structure Terminals : sig
     structure Number : REPL_TERMINAL
   end
-) :> sig val run : unit -> unit end = struct
+) :> sig
+  val run : unit -> unit
+end = struct
 
   structure Parser = CalcParser (
     structure Trivial = Trivial
@@ -426,11 +454,10 @@ functor CalcRepl (
   
   structure Repl = Repl (
     structure Result = struct
-      type t = Parser.repl
-      type token_stream = Parser.token_stream
-      exception LexError = Parser.LexError
-      val lex = Parser.lex
-      val parse = Parser.parse Parser.parseRepl
+      open Parser
+      type token_stream = TokenStream.t
+      type t = repl
+      val parse = parse parseRepl
       val print = Print.printRepl
     end
   )

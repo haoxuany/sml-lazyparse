@@ -16,8 +16,12 @@ structure Main = struct
 
   fun run (filename , output) =
     let
+      val _ =
+        case OS.Path.splitBaseExt filename of
+          { ext = SOME "ungram" , ... } => ()
+        | _ => die (String.concat ["file '" , filename , "' does not have .ungram extension"])
       val { dir , file = name } = OS.Path.splitDirFile output
-      val ins = TextIO.openIn filename
+      val ins = ( TextIO.openIn filename )
         handle IO.Io { cause , ... } =>
           die (String.concat ["cannot open file '" , filename , "': " , exnMessage cause])
       val sm = Parse.mkSourcemap' filename

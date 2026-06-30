@@ -1,3 +1,4 @@
+
 signature SML_AST = sig
   type 'a annot = { node : 'a , span : Annot.span }
   
@@ -209,9 +210,30 @@ sig
   where type word = Terminals.Word.t
   
   type 'a parser
-  type token_stream
+  
+  datatype terminal_token = TerminalChar of char
+  | TerminalFloat of float
+  | TerminalId of id
+  | TerminalInt of int
+  | TerminalString of string
+  | TerminalTyvar of tyvar
+  | TerminalWord of word
+  
+  structure TokenStream : sig
+    type t
+    datatype token =
+      Keyword of String.string * Annot.span
+    | Terminal of terminal_token * Annot.span
+    
+    datatype front = Nil | Cons of token * t
+    val front : t -> front
+    
+    val pos : t -> Annot.pos
+  end
+  
   exception LexError of Char.char * Annot.pos
-  val lex : Char.char Stream.stream -> Annot.pos -> token_stream
+  val lex : Char.char Stream.stream -> Annot.pos -> TokenStream.t
+  
   val parseCon : con parser
   val parseLab : lab parser
   val parseLongId : long_id parser
@@ -254,7 +276,12 @@ sig
   val parseProgList : prog_list parser
   val parseFctBind : fct_bind parser
   val parseSigBind : sig_bind parser
-  val parse : 'a parser -> token_stream -> ('a * token_stream) list
+  
+  datatype 'a result =
+    Success of ('a * TokenStream.t) list
+  | Fail of ParseError.t
+  val parse : 'a parser -> TokenStream.t -> 'a result
+  
 end =
 struct
 
@@ -452,6 +479,15 @@ struct
     structure Trivial = Trivial
     structure Terminal = struct
       type t = terminal_token
+      val name = fn v => (case v of
+        TerminalChar _ => "char"
+      | TerminalFloat _ => "float"
+      | TerminalId _ => "id"
+      | TerminalInt _ => "int"
+      | TerminalString _ => "string"
+      | TerminalTyvar _ => "tyvar"
+      | TerminalWord _ => "word"
+      )
       val lex =
         [ (fn ts =>
             case Terminals.Char.lex ts of
@@ -548,13 +584,13 @@ struct
   )
   open Internal
   
-  val parseTerminalChar = parseTerminal (fn TerminalChar v => SOME v | _ => NONE)
-  val parseTerminalFloat = parseTerminal (fn TerminalFloat v => SOME v | _ => NONE)
-  val parseTerminalId = parseTerminal (fn TerminalId v => SOME v | _ => NONE)
-  val parseTerminalInt = parseTerminal (fn TerminalInt v => SOME v | _ => NONE)
-  val parseTerminalString = parseTerminal (fn TerminalString v => SOME v | _ => NONE)
-  val parseTerminalTyvar = parseTerminal (fn TerminalTyvar v => SOME v | _ => NONE)
-  val parseTerminalWord = parseTerminal (fn TerminalWord v => SOME v | _ => NONE)
+  val parseTerminalChar = parseTerminal (fn TerminalChar v => SOME v | _ => NONE) "char"
+  val parseTerminalFloat = parseTerminal (fn TerminalFloat v => SOME v | _ => NONE) "float"
+  val parseTerminalId = parseTerminal (fn TerminalId v => SOME v | _ => NONE) "id"
+  val parseTerminalInt = parseTerminal (fn TerminalInt v => SOME v | _ => NONE) "int"
+  val parseTerminalString = parseTerminal (fn TerminalString v => SOME v | _ => NONE) "string"
+  val parseTerminalTyvar = parseTerminal (fn TerminalTyvar v => SOME v | _ => NONE) "tyvar"
+  val parseTerminalWord = parseTerminal (fn TerminalWord v => SOME v | _ => NONE) "word"
     val parseConDummy : con t_dummy = dummy ()
     val parseLabDummy : lab t_dummy = dummy ()
     val parseLongIdDummy : long_id t_dummy = dummy ()
@@ -606,27 +642,27 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseInt =
-            create ConInt (
+            create ConInt "Con" "Int" (
               bind (parseTerminalInt) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseWord =
-            create ConWord (
+            create ConWord "Con" "Word" (
               bind (parseTerminalWord) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseFloat =
-            create ConFloat (
+            create ConFloat "Con" "Float" (
               bind (parseTerminalFloat) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseChar =
-            create ConChar (
+            create ConChar "Con" "Char" (
               bind (parseTerminalChar) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseString =
-            create ConString (
+            create ConString "Con" "String" (
               bind (parseTerminalString) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
@@ -649,12 +685,12 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseId =
-            create LabId (
+            create LabId "Lab" "Id" (
               bind (parseTerminalId) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseNum =
-            create LabNum (
+            create LabNum "Lab" "Num" (
               bind (parseTerminalInt) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
@@ -674,7 +710,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseLongId =
-            create LongIdLongId (
+            create LongIdLongId "LongId" "LongId" (
               bind (parseTerminalId) (fn v0 =>
               bind (starLongest (
                 bind (
@@ -701,30 +737,30 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseConst =
-            create AtomExpConst (
+            create AtomExpConst "AtomExp" "Const" (
               bind (parseNonterminal (deref parseConDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseOpId =
-            create AtomExpOpId (
+            create AtomExpOpId "AtomExp" "OpId" (
               bind (keyword 40) (fn v0 =>
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseId =
-            create AtomExpId (
+            create AtomExpId "AtomExp" "Id" (
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseParens =
-            create AtomExpParens (
+            create AtomExpParens "AtomExp" "Parens" (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
               bind (keyword 2) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseTuple =
-            create AtomExpTuple (
+            create AtomExpTuple "AtomExp" "Tuple" (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
               bind (keyword 4) (fn v2 =>
@@ -741,7 +777,7 @@ struct
               return_node ((#node v1) , (#node v3) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
   
           val parseRecord =
-            create AtomExpRecord (
+            create AtomExpRecord "AtomExp" "Record" (
               bind (keyword 57) (fn v0 =>
               bind (optionalLongest (
                 bind (parseNonterminal (deref parseExpRowDummy)) (fn v2 =>
@@ -751,13 +787,13 @@ struct
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseSelector =
-            create AtomExpSelector (
+            create AtomExpSelector "AtomExp" "Selector" (
               bind (keyword 0) (fn v0 =>
               bind (parseNonterminal (deref parseLabDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseList =
-            create AtomExpList (
+            create AtomExpList "AtomExp" "List" (
               bind (keyword 13) (fn v0 =>
               bind (optionalLongest (
                 bind (parseNonterminal (deref parseExpListInnerDummy)) (fn v2 =>
@@ -767,7 +803,7 @@ struct
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseSeq =
-            create AtomExpSeq (
+            create AtomExpSeq "AtomExp" "Seq" (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
               bind (plusLongest (
@@ -782,7 +818,7 @@ struct
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
           val parseLet =
-            create AtomExpLet (
+            create AtomExpLet "AtomExp" "Let" (
               bind (keyword 36) (fn v0 =>
               bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
               bind (keyword 32) (fn v2 =>
@@ -822,7 +858,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseApp =
-            create ExpApp (
+            create ExpApp "Exp" "App" (
               bind (plusLongest (
                 bind (parseNonterminal (deref parseAtomExpDummy)) (fn v1 =>
                 return_node (#node v1) [ annot_add v1 ])))
@@ -830,7 +866,7 @@ struct
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseCase =
-            create ExpCase (
+            create ExpCase "Exp" "Case" (
               bind (keyword 20) (fn v0 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
               bind (keyword 39) (fn v2 =>
@@ -838,7 +874,7 @@ struct
               return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
           val parseFn =
-            create ExpFn (
+            create ExpFn "Exp" "Fn" (
               bind (keyword 27) (fn v0 =>
               bind (parseNonterminal (deref parseMatchDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
@@ -853,7 +889,7 @@ struct
         val parseLevel7 = fix (fn parseLevel7 =>
         let
           val parseAnnot =
-            create ExpAnnot (
+            create ExpAnnot "Exp" "Annot" (
               bind (parseNonterminal parseLevel7) (fn v0 =>
               bind (keyword 8) (fn v1 =>
               bind (parseNonterminal (deref parseTypDummy)) (fn v2 =>
@@ -868,7 +904,7 @@ struct
         val parseLevel6 = fix (fn parseLevel6 =>
         let
           val parseHandle =
-            create ExpHandle (
+            create ExpHandle "Exp" "Handle" (
               bind (parseNonterminal parseLevel6) (fn v0 =>
               bind (keyword 30) (fn v1 =>
               bind (parseNonterminal (deref parseMatchDummy)) (fn v2 =>
@@ -883,20 +919,20 @@ struct
         val parseLevel5 = fix (fn parseLevel5 =>
         let
           val parseRaise =
-            create ExpRaise (
+            create ExpRaise "Exp" "Raise" (
               bind (keyword 43) (fn v0 =>
               bind (parseNonterminal parseLevel5) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseAndAlso =
-            create ExpAndAlso (
+            create ExpAndAlso "Exp" "AndAlso" (
               bind (parseNonterminal parseLevel5) (fn v0 =>
               bind (keyword 18) (fn v1 =>
               bind (parseNonterminal (forget parseLevel6)) (fn v2 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseIf =
-            create ExpIf (
+            create ExpIf "Exp" "If" (
               bind (keyword 31) (fn v0 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
               bind (keyword 50) (fn v2 =>
@@ -906,7 +942,7 @@ struct
               return_node ((#node v1) , (#node v3) , (#node v5)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
   
           val parseWhile =
-            create ExpWhile (
+            create ExpWhile "Exp" "While" (
               bind (keyword 54) (fn v0 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
               bind (keyword 22) (fn v2 =>
@@ -925,7 +961,7 @@ struct
         val parseLevel4 = fix (fn parseLevel4 =>
         let
           val parseOrElse =
-            create ExpOrElse (
+            create ExpOrElse "Exp" "OrElse" (
               bind (parseNonterminal parseLevel4) (fn v0 =>
               bind (keyword 42) (fn v1 =>
               bind (parseNonterminal (forget parseLevel5)) (fn v2 =>
@@ -947,7 +983,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseExpListInner =
-            create ExpListInnerExpListInner (
+            create ExpListInnerExpListInner "ExpListInner" "ExpListInner" (
               bind (parseNonterminal (deref parseExpDummy)) (fn v0 =>
               bind (starLongest (
                 bind (
@@ -974,7 +1010,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseExpRow =
-            create ExpRowExpRow (
+            create ExpRowExpRow "ExpRow" "ExpRow" (
               bind (parseNonterminal (deref parseLabDummy)) (fn v0 =>
               bind (keyword 11) (fn v1 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v2 =>
@@ -1005,7 +1041,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseMatch =
-            create MatchMatch (
+            create MatchMatch "Match" "Match" (
               bind (parseNonterminal (deref parseMatchArmDummy)) (fn v0 =>
               bind (starLongest (
                 bind (
@@ -1032,7 +1068,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseMatchArm =
-            create MatchArmMatchArm (
+            create MatchArmMatchArm "MatchArm" "MatchArm" (
               bind (parseNonterminal (deref parsePatDummy)) (fn v0 =>
               bind (keyword 12) (fn v1 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v2 =>
@@ -1053,28 +1089,28 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseConst =
-            create PatConst (
+            create PatConst "Pat" "Const" (
               bind (parseNonterminal (deref parseConDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseWildcard =
-            create (fn () => PatWildcard) (
+            create (fn () => PatWildcard) "Pat" "Wildcard" (
               bind (keyword 15) (fn v0 =>
               return_node () [ annot_add v0 ]))
   
           val parseOpVar =
-            create PatOpVar (
+            create PatOpVar "Pat" "OpVar" (
               bind (keyword 40) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseVar =
-            create PatVar (
+            create PatVar "Pat" "Var" (
               bind (parseTerminalId) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseOpCon =
-            create PatOpCon (
+            create PatOpCon "Pat" "OpCon" (
               bind (keyword 40) (fn v0 =>
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
               bind (optionalLongest (
@@ -1084,14 +1120,14 @@ struct
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseParens =
-            create PatParens (
+            create PatParens "Pat" "Parens" (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parsePatDummy)) (fn v1 =>
               bind (keyword 2) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseTuple =
-            create PatTuple (
+            create PatTuple "Pat" "Tuple" (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parsePatDummy)) (fn v1 =>
               bind (keyword 4) (fn v2 =>
@@ -1108,7 +1144,7 @@ struct
               return_node ((#node v1) , (#node v3) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
   
           val parseRecord =
-            create PatRecord (
+            create PatRecord "Pat" "Record" (
               bind (keyword 57) (fn v0 =>
               bind (optionalLongest (
                 bind (parseNonterminal (deref parsePatRowDummy)) (fn v2 =>
@@ -1118,7 +1154,7 @@ struct
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseList =
-            create PatList (
+            create PatList "Pat" "List" (
               bind (keyword 13) (fn v0 =>
               bind (optionalLongest (
                 bind (parseNonterminal (deref parsePatListInnerDummy)) (fn v2 =>
@@ -1143,20 +1179,20 @@ struct
         val parseLevel5 = fix (fn parseLevel5 =>
         let
           val parseCon =
-            create PatCon (
+            create PatCon "Pat" "Con" (
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
               bind (parseNonterminal parseLevel5) (fn v1 =>
               return_node ((#node v0) , (#node v1)) [ annot_add v0 , annot_add v1 ])))
   
           val parseAnnot =
-            create PatAnnot (
+            create PatAnnot "Pat" "Annot" (
               bind (parseNonterminal parseLevel5) (fn v0 =>
               bind (keyword 8) (fn v1 =>
               bind (parseNonterminal (deref parseTypDummy)) (fn v2 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseOpLayered =
-            create PatOpLayered (
+            create PatOpLayered "Pat" "OpLayered" (
               bind (keyword 40) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               bind (optionalLongest (
@@ -1172,7 +1208,7 @@ struct
               return_node ((#node v1) , (#node v2) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
           val parseLayered =
-            create PatLayered (
+            create PatLayered "Pat" "Layered" (
               bind (parseTerminalId) (fn v0 =>
               bind (optionalLongest (
                 bind (
@@ -1205,7 +1241,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parsePatListInner =
-            create PatListInnerPatListInner (
+            create PatListInnerPatListInner "PatListInner" "PatListInner" (
               bind (parseNonterminal (deref parsePatDummy)) (fn v0 =>
               bind (starLongest (
                 bind (
@@ -1232,12 +1268,12 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseWildcard =
-            create (fn () => PatRowWildcard) (
+            create (fn () => PatRowWildcard) "PatRow" "Wildcard" (
               bind (keyword 7) (fn v0 =>
               return_node () [ annot_add v0 ]))
   
           val parsePat =
-            create PatRowPat (
+            create PatRowPat "PatRow" "Pat" (
               bind (parseNonterminal (deref parseLabDummy)) (fn v0 =>
               bind (keyword 11) (fn v1 =>
               bind (parseNonterminal (deref parsePatDummy)) (fn v2 =>
@@ -1252,7 +1288,7 @@ struct
               return_node ((#node v0) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
           val parseVar =
-            create PatRowVar (
+            create PatRowVar "PatRow" "Var" (
               bind (parseTerminalId) (fn v0 =>
               bind (optionalLongest (
                 bind (
@@ -1297,12 +1333,12 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseVar =
-            create AtomTypVar (
+            create AtomTypVar "AtomTyp" "Var" (
               bind (parseTerminalTyvar) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseConAppMulti =
-            create AtomTypConAppMulti (
+            create AtomTypConAppMulti "AtomTyp" "ConAppMulti" (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parseTypDummy)) (fn v1 =>
               bind (keyword 4) (fn v2 =>
@@ -1320,19 +1356,19 @@ struct
               return_node ((#node v1) , (#node v3) , (#node v4) , (#node v6)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 ]))))))))
   
           val parseCon =
-            create AtomTypCon (
+            create AtomTypCon "AtomTyp" "Con" (
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseParens =
-            create AtomTypParens (
+            create AtomTypParens "AtomTyp" "Parens" (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parseTypDummy)) (fn v1 =>
               bind (keyword 2) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseRecord =
-            create AtomTypRecord (
+            create AtomTypRecord "AtomTyp" "Record" (
               bind (keyword 57) (fn v0 =>
               bind (optionalLongest (
                 bind (parseNonterminal (deref parseTypRowDummy)) (fn v2 =>
@@ -1353,7 +1389,7 @@ struct
         val parseLevel1 = fix (fn parseLevel1 =>
         let
           val parseConApp =
-            create AtomTypConApp (
+            create AtomTypConApp "AtomTyp" "ConApp" (
               bind (parseNonterminal parseLevel1) (fn v0 =>
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
               return_node ((#node v0) , (#node v1)) [ annot_add v0 , annot_add v1 ])))
@@ -1374,12 +1410,12 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseInner =
-            create TypInner (
+            create TypInner "Typ" "Inner" (
               bind (parseNonterminal (deref parseAtomTypDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseTupleTyp =
-            create TypTupleTyp (
+            create TypTupleTyp "Typ" "TupleTyp" (
               bind (parseNonterminal (deref parseAtomTypDummy)) (fn v0 =>
               bind (plusLongest (
                 bind (
@@ -1400,7 +1436,7 @@ struct
         val parseLevel1 = fix (fn parseLevel1 =>
         let
           val parseArrow =
-            create TypArrow (
+            create TypArrow "Typ" "Arrow" (
               bind (parseNonterminal (forget parseAtom)) (fn v0 =>
               bind (keyword 5) (fn v1 =>
               bind (parseNonterminal parseLevel1) (fn v2 =>
@@ -1422,7 +1458,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseTypRow =
-            create TypRowTypRow (
+            create TypRowTypRow "TypRow" "TypRow" (
               bind (parseNonterminal (deref parseLabDummy)) (fn v0 =>
               bind (keyword 8) (fn v1 =>
               bind (parseNonterminal (deref parseTypDummy)) (fn v2 =>
@@ -1453,27 +1489,27 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseVal =
-            create DecVal (
+            create DecVal "Dec" "Val" (
               bind (keyword 52) (fn v0 =>
               bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v1 =>
               bind (parseNonterminal (deref parseValBindDummy)) (fn v2 =>
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseFun =
-            create DecFun (
+            create DecFun "Dec" "Fun" (
               bind (keyword 28) (fn v0 =>
               bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v1 =>
               bind (parseNonterminal (deref parseFunBindDummy)) (fn v2 =>
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseType =
-            create DecType (
+            create DecType "Dec" "Type" (
               bind (keyword 51) (fn v0 =>
               bind (parseNonterminal (deref parseTypBindDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseDatatype =
-            create DecDatatype (
+            create DecDatatype "Dec" "Datatype" (
               bind (keyword 21) (fn v0 =>
               bind (parseNonterminal (deref parseDatBindDummy)) (fn v1 =>
               bind (optionalLongest (
@@ -1487,7 +1523,7 @@ struct
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseDatatypeRepl =
-            create DecDatatypeRepl (
+            create DecDatatypeRepl "Dec" "DatatypeRepl" (
               bind (keyword 21) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               bind (keyword 11) (fn v2 =>
@@ -1496,7 +1532,7 @@ struct
               return_node ((#node v1) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
           val parseAbstype =
-            create DecAbstype (
+            create DecAbstype "Dec" "Abstype" (
               bind (keyword 16) (fn v0 =>
               bind (parseNonterminal (deref parseDatBindDummy)) (fn v1 =>
               bind (optionalLongest (
@@ -1513,24 +1549,24 @@ struct
               return_node ((#node v1) , (#node v2) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
   
           val parseException =
-            create DecException (
+            create DecException "Dec" "Exception" (
               bind (keyword 26) (fn v0 =>
               bind (parseNonterminal (deref parseExnBindDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseStructure =
-            create DecStructure (
+            create DecStructure "Dec" "Structure" (
               bind (keyword 49) (fn v0 =>
               bind (parseNonterminal (deref parseStrBindDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseSemicolon =
-            create (fn () => DecSemicolon) (
+            create (fn () => DecSemicolon) "Dec" "Semicolon" (
               bind (keyword 10) (fn v0 =>
               return_node () [ annot_add v0 ]))
   
           val parseLocal =
-            create DecLocal (
+            create DecLocal "Dec" "Local" (
               bind (keyword 37) (fn v0 =>
               bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
               bind (keyword 32) (fn v2 =>
@@ -1539,7 +1575,7 @@ struct
               return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
           val parseOpen =
-            create DecOpen (
+            create DecOpen "Dec" "Open" (
               bind (keyword 41) (fn v0 =>
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
               bind (starLongest (
@@ -1549,7 +1585,7 @@ struct
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseNonfix =
-            create DecNonfix (
+            create DecNonfix "Dec" "Nonfix" (
               bind (keyword 38) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               bind (starLongest (
@@ -1559,7 +1595,7 @@ struct
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseInfix =
-            create DecInfix (
+            create DecInfix "Dec" "Infix" (
               bind (keyword 34) (fn v0 =>
               bind (optionalLongest (
                 bind (parseTerminalInt) (fn v2 =>
@@ -1573,7 +1609,7 @@ struct
               return_node ((#node v1) , (#node v2) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
           val parseInfixr =
-            create DecInfixr (
+            create DecInfixr "Dec" "Infixr" (
               bind (keyword 35) (fn v0 =>
               bind (optionalLongest (
                 bind (parseTerminalInt) (fn v2 =>
@@ -1614,7 +1650,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseDecList =
-            create DecListDecList (
+            create DecListDecList "DecList" "DecList" (
               bind (plusLongest (
                 bind (parseNonterminal (deref parseDecDummy)) (fn v1 =>
                 return_node (#node v1) [ annot_add v1 ])))
@@ -1636,12 +1672,12 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseOne =
-            create TyVarSeqOne (
+            create TyVarSeqOne "TyVarSeq" "One" (
               bind (parseTerminalTyvar) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseMany =
-            create TyVarSeqMany (
+            create TyVarSeqMany "TyVarSeq" "Many" (
               bind (keyword 1) (fn v0 =>
               bind (parseTerminalTyvar) (fn v1 =>
               bind (starLongest (
@@ -1656,7 +1692,7 @@ struct
               return_node ((#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
           val parseEmpty =
-            create (fn () => TyVarSeqEmpty) (
+            create (fn () => TyVarSeqEmpty) "TyVarSeq" "Empty" (
               empty ())
   
         in either
@@ -1676,7 +1712,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseValBind =
-            create ValBindValBind (
+            create ValBindValBind "ValBind" "ValBind" (
               bind (parseNonterminal (deref parsePatDummy)) (fn v0 =>
               bind (keyword 11) (fn v1 =>
               bind (parseNonterminal (deref parseExpDummy)) (fn v2 =>
@@ -1698,7 +1734,7 @@ struct
         val parseLevel5 = fix (fn parseLevel5 =>
         let
           val parseRec =
-            create ValBindRec (
+            create ValBindRec "ValBind" "Rec" (
               bind (keyword 44) (fn v0 =>
               bind (parseNonterminal parseLevel5) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
@@ -1719,7 +1755,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseFunBind =
-            create FunBindFunBind (
+            create FunBindFunBind "FunBind" "FunBind" (
               bind (parseNonterminal (deref parseFunMatchDummy)) (fn v0 =>
               bind (optionalLongest (
                 bind (
@@ -1746,7 +1782,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseNonfix =
-            create FunMatchNonfix (
+            create FunMatchNonfix "FunMatch" "Nonfix" (
               bind (optionalLongest (
                 bind (keyword 40) (fn v1 =>
                 return_node () [ annot_add v1 ])))
@@ -1778,7 +1814,7 @@ struct
               return_node ((#node v1) , (#node v2) , (#node v3) , (#node v4) , (#node v6) , (#node v7)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 , annot_add v7 ])))))))))
   
           val parseInfix =
-            create FunMatchInfix (
+            create FunMatchInfix "FunMatch" "Infix" (
               bind (parseNonterminal (deref parsePatDummy)) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               bind (parseNonterminal (deref parsePatDummy)) (fn v2 =>
@@ -1803,7 +1839,7 @@ struct
               return_node ((#node v0) , (#node v1) , (#node v2) , (#node v3) , (#node v5) , (#node v6)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 ]))))))))
   
           val parseInfixParen =
-            create FunMatchInfixParen (
+            create FunMatchInfixParen "FunMatch" "InfixParen" (
               bind (keyword 1) (fn v0 =>
               bind (parseNonterminal (deref parsePatDummy)) (fn v1 =>
               bind (parseTerminalId) (fn v2 =>
@@ -1850,7 +1886,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseTypBind =
-            create TypBindTypBind (
+            create TypBindTypBind "TypBind" "TypBind" (
               bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               bind (keyword 11) (fn v2 =>
@@ -1880,7 +1916,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseDatBind =
-            create DatBindDatBind (
+            create DatBindDatBind "DatBind" "DatBind" (
               bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               bind (keyword 11) (fn v2 =>
@@ -1910,7 +1946,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseConBind =
-            create ConBindConBind (
+            create ConBindConBind "ConBind" "ConBind" (
               bind (parseTerminalId) (fn v0 =>
               bind (optionalLongest (
                 bind (
@@ -1945,7 +1981,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseGen =
-            create ExnBindGen (
+            create ExnBindGen "ExnBind" "Gen" (
               bind (parseTerminalId) (fn v0 =>
               bind (optionalLongest (
                 bind (
@@ -1966,7 +2002,7 @@ struct
               return_node ((#node v0) , (#node v1) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseRepl =
-            create ExnBindRepl (
+            create ExnBindRepl "ExnBind" "Repl" (
               bind (parseTerminalId) (fn v0 =>
               bind (keyword 11) (fn v1 =>
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v2 =>
@@ -1996,19 +2032,19 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseId =
-            create StrId (
+            create StrId "Str" "Id" (
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseStruct =
-            create StrStruct (
+            create StrStruct "Str" "Struct" (
               bind (keyword 48) (fn v0 =>
               bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
               bind (keyword 24) (fn v2 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseFctApp =
-            create StrFctApp (
+            create StrFctApp "Str" "FctApp" (
               bind (parseTerminalId) (fn v0 =>
               bind (keyword 1) (fn v1 =>
               bind (parseNonterminal (deref parseStrDummy)) (fn v2 =>
@@ -2016,7 +2052,7 @@ struct
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
           val parseFctAppDec =
-            create StrFctAppDec (
+            create StrFctAppDec "Str" "FctAppDec" (
               bind (parseTerminalId) (fn v0 =>
               bind (keyword 1) (fn v1 =>
               bind (parseNonterminal (deref parseDecListDummy)) (fn v2 =>
@@ -2024,7 +2060,7 @@ struct
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
           val parseLet =
-            create StrLet (
+            create StrLet "Str" "Let" (
               bind (keyword 36) (fn v0 =>
               bind (parseNonterminal (deref parseDecListDummy)) (fn v1 =>
               bind (keyword 32) (fn v2 =>
@@ -2044,14 +2080,14 @@ struct
         val parseLevel1 = fix (fn parseLevel1 =>
         let
           val parseTransparent =
-            create StrTransparent (
+            create StrTransparent "Str" "Transparent" (
               bind (parseNonterminal parseLevel1) (fn v0 =>
               bind (keyword 8) (fn v1 =>
               bind (parseNonterminal (deref parseSigExpDummy)) (fn v2 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
           val parseOpaque =
-            create StrOpaque (
+            create StrOpaque "Str" "Opaque" (
               bind (parseNonterminal parseLevel1) (fn v0 =>
               bind (keyword 9) (fn v1 =>
               bind (parseNonterminal (deref parseSigExpDummy)) (fn v2 =>
@@ -2074,7 +2110,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseStrBind =
-            create StrBindStrBind (
+            create StrBindStrBind "StrBind" "StrBind" (
               bind (parseTerminalId) (fn v0 =>
               bind (optionalLongest (
                 bind (parseNonterminal (deref parseSigAnnotDummy)) (fn v2 =>
@@ -2107,13 +2143,13 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseTransparent =
-            create SigAnnotTransparent (
+            create SigAnnotTransparent "SigAnnot" "Transparent" (
               bind (keyword 8) (fn v0 =>
               bind (parseNonterminal (deref parseSigExpDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseOpaque =
-            create SigAnnotOpaque (
+            create SigAnnotOpaque "SigAnnot" "Opaque" (
               bind (keyword 9) (fn v0 =>
               bind (parseNonterminal (deref parseSigExpDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
@@ -2134,12 +2170,12 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseId =
-            create SigExpId (
+            create SigExpId "SigExp" "Id" (
               bind (parseTerminalId) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseSig =
-            create SigExpSig (
+            create SigExpSig "SigExp" "Sig" (
               bind (keyword 46) (fn v0 =>
               bind (parseNonterminal (deref parseSpecListDummy)) (fn v1 =>
               bind (keyword 24) (fn v2 =>
@@ -2154,7 +2190,7 @@ struct
         val parseLevel1 = fix (fn parseLevel1 =>
         let
           val parseWhere =
-            create SigExpWhere (
+            create SigExpWhere "SigExp" "Where" (
               bind (parseNonterminal parseLevel1) (fn v0 =>
               bind (keyword 53) (fn v1 =>
               bind (keyword 51) (fn v2 =>
@@ -2177,7 +2213,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseTypRefin =
-            create TypRefinTypRefin (
+            create TypRefinTypRefin "TypRefin" "TypRefin" (
               bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v0 =>
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v1 =>
               bind (keyword 11) (fn v2 =>
@@ -2208,37 +2244,37 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseVal =
-            create SpecVal (
+            create SpecVal "Spec" "Val" (
               bind (keyword 52) (fn v0 =>
               bind (parseNonterminal (deref parseValDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseType =
-            create SpecType (
+            create SpecType "Spec" "Type" (
               bind (keyword 51) (fn v0 =>
               bind (parseNonterminal (deref parseTypDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseEqtype =
-            create SpecEqtype (
+            create SpecEqtype "Spec" "Eqtype" (
               bind (keyword 25) (fn v0 =>
               bind (parseNonterminal (deref parseTypDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseTypeAbbrev =
-            create SpecTypeAbbrev (
+            create SpecTypeAbbrev "Spec" "TypeAbbrev" (
               bind (keyword 51) (fn v0 =>
               bind (parseNonterminal (deref parseTypBindDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseDatatype =
-            create SpecDatatype (
+            create SpecDatatype "Spec" "Datatype" (
               bind (keyword 21) (fn v0 =>
               bind (parseNonterminal (deref parseDatDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseDatatypeRepl =
-            create SpecDatatypeRepl (
+            create SpecDatatypeRepl "Spec" "DatatypeRepl" (
               bind (keyword 21) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               bind (keyword 11) (fn v2 =>
@@ -2247,30 +2283,30 @@ struct
               return_node ((#node v1) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
           val parseException =
-            create SpecException (
+            create SpecException "Spec" "Exception" (
               bind (keyword 26) (fn v0 =>
               bind (parseNonterminal (deref parseExnDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseStructure =
-            create SpecStructure (
+            create SpecStructure "Spec" "Structure" (
               bind (keyword 49) (fn v0 =>
               bind (parseNonterminal (deref parseStrDescDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseSemicolon =
-            create (fn () => SpecSemicolon) (
+            create (fn () => SpecSemicolon) "Spec" "Semicolon" (
               bind (keyword 10) (fn v0 =>
               return_node () [ annot_add v0 ]))
   
           val parseInclude =
-            create SpecInclude (
+            create SpecInclude "Spec" "Include" (
               bind (keyword 33) (fn v0 =>
               bind (parseNonterminal (deref parseSigExpDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseIncludeMulti =
-            create SpecIncludeMulti (
+            create SpecIncludeMulti "Spec" "IncludeMulti" (
               bind (keyword 33) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               bind (starLongest (
@@ -2297,7 +2333,7 @@ struct
         val parseLevel1 = fix (fn parseLevel1 =>
         let
           val parseSharingType =
-            create SpecSharingType (
+            create SpecSharingType "Spec" "SharingType" (
               bind (parseNonterminal parseLevel1) (fn v0 =>
               bind (keyword 45) (fn v1 =>
               bind (keyword 51) (fn v2 =>
@@ -2313,7 +2349,7 @@ struct
               return_node ((#node v0) , (#node v3) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
           val parseSharing =
-            create SpecSharing (
+            create SpecSharing "Spec" "Sharing" (
               bind (parseNonterminal parseLevel1) (fn v0 =>
               bind (keyword 45) (fn v1 =>
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v2 =>
@@ -2344,7 +2380,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseSpecList =
-            create SpecListSpecList (
+            create SpecListSpecList "SpecList" "SpecList" (
               bind (plusLongest (
                 bind (parseNonterminal (deref parseSpecDummy)) (fn v1 =>
                 return_node (#node v1) [ annot_add v1 ])))
@@ -2366,7 +2402,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseValDesc =
-            create ValDescValDesc (
+            create ValDescValDesc "ValDesc" "ValDesc" (
               bind (parseTerminalId) (fn v0 =>
               bind (keyword 8) (fn v1 =>
               bind (parseNonterminal (deref parseTypDummy)) (fn v2 =>
@@ -2395,7 +2431,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseTypDesc =
-            create TypDescTypDesc (
+            create TypDescTypDesc "TypDesc" "TypDesc" (
               bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               bind (optionalLongest (
@@ -2423,7 +2459,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseDatDesc =
-            create DatDescDatDesc (
+            create DatDescDatDesc "DatDesc" "DatDesc" (
               bind (parseNonterminal (deref parseTyVarSeqDummy)) (fn v0 =>
               bind (parseTerminalId) (fn v1 =>
               bind (keyword 11) (fn v2 =>
@@ -2453,7 +2489,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseConDesc =
-            create ConDescConDesc (
+            create ConDescConDesc "ConDesc" "ConDesc" (
               bind (parseTerminalId) (fn v0 =>
               bind (optionalLongest (
                 bind (
@@ -2488,7 +2524,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseExnDesc =
-            create ExnDescExnDesc (
+            create ExnDescExnDesc "ExnDesc" "ExnDesc" (
               bind (parseTerminalId) (fn v0 =>
               bind (optionalLongest (
                 bind (
@@ -2523,7 +2559,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseStrDesc =
-            create StrDescStrDesc (
+            create StrDescStrDesc "StrDesc" "StrDesc" (
               bind (parseTerminalId) (fn v0 =>
               bind (keyword 8) (fn v1 =>
               bind (parseNonterminal (deref parseSigExpDummy)) (fn v2 =>
@@ -2552,24 +2588,24 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseDec =
-            create ProgDec (
+            create ProgDec "Prog" "Dec" (
               bind (parseNonterminal (deref parseDecDummy)) (fn v0 =>
               return_node (#node v0) [ annot_add v0 ]))
   
           val parseFunctor =
-            create ProgFunctor (
+            create ProgFunctor "Prog" "Functor" (
               bind (keyword 29) (fn v0 =>
               bind (parseNonterminal (deref parseFctBindDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseSignature =
-            create ProgSignature (
+            create ProgSignature "Prog" "Signature" (
               bind (keyword 47) (fn v0 =>
               bind (parseNonterminal (deref parseSigBindDummy)) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
           val parseSemicolon =
-            create (fn () => ProgSemicolon) (
+            create (fn () => ProgSemicolon) "Prog" "Semicolon" (
               bind (keyword 10) (fn v0 =>
               return_node () [ annot_add v0 ]))
   
@@ -2591,7 +2627,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseProgList =
-            create ProgListProgList (
+            create ProgListProgList "ProgList" "ProgList" (
               bind (plusLongest (
                 bind (parseNonterminal (deref parseProgDummy)) (fn v1 =>
                 return_node (#node v1) [ annot_add v1 ])))
@@ -2613,7 +2649,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parsePlain =
-            create FctBindPlain (
+            create FctBindPlain "FctBind" "Plain" (
               bind (parseTerminalId) (fn v0 =>
               bind (keyword 1) (fn v1 =>
               bind (parseTerminalId) (fn v2 =>
@@ -2637,7 +2673,7 @@ struct
               return_node ((#node v0) , (#node v2) , (#node v4) , (#node v6) , (#node v8) , (#node v9)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 , annot_add v6 , annot_add v7 , annot_add v8 , annot_add v9 ])))))))))))
   
           val parseOpened =
-            create FctBindOpened (
+            create FctBindOpened "FctBind" "Opened" (
               bind (parseTerminalId) (fn v0 =>
               bind (keyword 1) (fn v1 =>
               bind (parseNonterminal (deref parseSpecDummy)) (fn v2 =>
@@ -2674,7 +2710,7 @@ struct
         val parseAtom = fix (fn parseAtom =>
         let
           val parseSigBind =
-            create SigBindSigBind (
+            create SigBindSigBind "SigBind" "SigBind" (
               bind (parseTerminalId) (fn v0 =>
               bind (keyword 11) (fn v1 =>
               bind (parseNonterminal (deref parseSigExpDummy)) (fn v2 =>
@@ -2741,7 +2777,7 @@ struct
   val () = set parseFctBindDummy parseFctBind
   val () = set parseSigBindDummy parseSigBind
   
-  val parse = parser
+  val parse = parse
 
 end
 
@@ -2758,6 +2794,7 @@ functor SmlPrint (
   end
 ) :>
 sig
+  
   val printChar : Ast.char Ast.annot -> string
   val printFloat : Ast.float Ast.annot -> string
   val printId : Ast.id Ast.annot -> string
@@ -2807,6 +2844,7 @@ sig
   val printProgList : Ast.prog_list -> string
   val printFctBind : Ast.fct_bind -> string
   val printSigBind : Ast.sig_bind -> string
+  
   val prettyPrintChar : Ast.char Ast.annot -> string
   val prettyPrintFloat : Ast.float Ast.annot -> string
   val prettyPrintId : Ast.id Ast.annot -> string
@@ -5323,7 +5361,9 @@ functor SmlRepl (
     structure Tyvar : REPL_TERMINAL
     structure Word : REPL_TERMINAL
   end
-) :> sig val run : unit -> unit end = struct
+) :> sig
+  val run : unit -> unit
+end = struct
 
   structure Parser = SmlParser (
     structure Trivial = Trivial
@@ -5337,11 +5377,10 @@ functor SmlRepl (
   
   structure Repl = Repl (
     structure Result = struct
-      type t = Parser.sig_bind
-      type token_stream = Parser.token_stream
-      exception LexError = Parser.LexError
-      val lex = Parser.lex
-      val parse = Parser.parse Parser.parseSigBind
+      open Parser
+      type token_stream = TokenStream.t
+      type t = sig_bind
+      val parse = parse parseSigBind
       val print = Print.printSigBind
     end
   )
