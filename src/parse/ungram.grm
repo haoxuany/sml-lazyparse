@@ -15,6 +15,7 @@
   | LBracket            ("[")
   | RBracket            ("]")
   | Comma               (",")
+  | Underscore          ("_")
   | AssocLeft           ("left")
   | AssocRight          ("right")
   | AssocNone           ("none")
@@ -72,6 +73,7 @@ Property
   : "assoc" AssocKind    => (A.Assoc AssocKind)
   | "prec" Int           => (A.Prec Int)
   | "name" Ident         => (A.RuleName Ident)
+  | "name" "_"           => (A.RuleName "")
   ;
 
 AssocKind

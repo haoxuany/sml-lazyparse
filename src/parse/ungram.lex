@@ -71,6 +71,7 @@ end
 <INITIAL>"["    => (Tok.LBracket);
 <INITIAL>"]"    => (Tok.RBracket);
 <INITIAL>","    => (Tok.Comma);
+<INITIAL>"_"    => (Tok.Underscore);
 
 <INITIAL>"\""
         => (YYBEGIN DOUBLEQUOTE; continue());

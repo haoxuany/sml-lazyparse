@@ -11,6 +11,7 @@ structure UngramTokens =
       | LBracket
       | RBracket
       | Comma
+      | Underscore
       | AssocLeft
       | AssocRight
       | AssocNone
@@ -23,7 +24,7 @@ structure UngramTokens =
       | Ident of string
       | EOF
     val allToks = [
-            ColonColonEq, Bar, Star, Plus, Query, LParen, RParen, LBracket, RBracket, Comma, AssocLeft, AssocRight, AssocNone, RuleName, Assoc, Prec, EOF
+            ColonColonEq, Bar, Star, Plus, Query, LParen, RParen, LBracket, RBracket, Comma, Underscore, AssocLeft, AssocRight, AssocNone, RuleName, Assoc, Prec, EOF
            ]
     fun toString tok =
 (case (tok)
@@ -37,6 +38,7 @@ structure UngramTokens =
   | (LBracket) => "["
   | (RBracket) => "]"
   | (Comma) => ","
+  | (Underscore) => "_"
   | (AssocLeft) => "left"
   | (AssocRight) => "right"
   | (AssocNone) => "none"
@@ -61,6 +63,7 @@ structure UngramTokens =
   | (LBracket) => false
   | (RBracket) => false
   | (Comma) => false
+  | (Underscore) => false
   | (AssocLeft) => false
   | (AssocRight) => false
   | (AssocNone) => false
@@ -125,6 +128,8 @@ fun Property_PROD_2_ACT (Prec, Int, Prec_SPAN : (Lex.pos * Lex.pos), Int_SPAN : 
   (A.Prec Int)
 fun Property_PROD_3_ACT (RuleName, Ident, RuleName_SPAN : (Lex.pos * Lex.pos), Ident_SPAN : (Lex.pos * Lex.pos), FULL_SPAN : (Lex.pos * Lex.pos)) = 
   (A.RuleName Ident)
+fun Property_PROD_4_ACT (RuleName, Underscore, RuleName_SPAN : (Lex.pos * Lex.pos), Underscore_SPAN : (Lex.pos * Lex.pos), FULL_SPAN : (Lex.pos * Lex.pos)) = 
+  (A.RuleName "")
 fun AssocKind_PROD_1_ACT (AssocLeft, AssocLeft_SPAN : (Lex.pos * Lex.pos), FULL_SPAN : (Lex.pos * Lex.pos)) = 
   (A.Left)
 fun AssocKind_PROD_2_ACT (AssocRight, AssocRight_SPAN : (Lex.pos * Lex.pos), FULL_SPAN : (Lex.pos * Lex.pos)) = 
@@ -225,6 +230,10 @@ fun matchRBracket strm = (case (lex(strm))
 (* end case *))
 fun matchComma strm = (case (lex(strm))
  of (Tok.Comma, span, strm') => ((), span, strm')
+  | _ => fail()
+(* end case *))
+fun matchUnderscore strm = (case (lex(strm))
+ of (Tok.Underscore, span, strm') => ((), span, strm')
   | _ => fail()
 (* end case *))
 fun matchAssocLeft strm = (case (lex(strm))
@@ -329,11 +338,24 @@ fun Property_NT (strm) = let
               (UserCode.Property_PROD_3_ACT (RuleName_RES, Ident_RES, RuleName_SPAN : (Lex.pos * Lex.pos), Ident_SPAN : (Lex.pos * Lex.pos), FULL_SPAN : (Lex.pos * Lex.pos)),
                 FULL_SPAN, strm')
             end
+      fun Property_PROD_4 (strm) = let
+            val (RuleName_RES, RuleName_SPAN, strm') = matchRuleName(strm)
+            val (Underscore_RES, Underscore_SPAN, strm') = matchUnderscore(strm')
+            val FULL_SPAN = (#1(RuleName_SPAN), #2(Underscore_SPAN))
+            in
+              (UserCode.Property_PROD_4_ACT (RuleName_RES, Underscore_RES, RuleName_SPAN : (Lex.pos * Lex.pos), Underscore_SPAN : (Lex.pos * Lex.pos), FULL_SPAN : (Lex.pos * Lex.pos)),
+                FULL_SPAN, strm')
+            end
       in
         (case (lex(strm))
-         of (Tok.RuleName, _, strm') => Property_PROD_3(strm)
+         of (Tok.Prec, _, strm') => Property_PROD_2(strm)
           | (Tok.Assoc, _, strm') => Property_PROD_1(strm)
-          | (Tok.Prec, _, strm') => Property_PROD_2(strm)
+          | (Tok.RuleName, _, strm') =>
+              (case (lex(strm'))
+               of (Tok.Ident(_), _, strm') => Property_PROD_3(strm)
+                | (Tok.Underscore, _, strm') => Property_PROD_4(strm)
+                | _ => fail()
+              (* end case *))
           | _ => fail()
         (* end case *))
       end

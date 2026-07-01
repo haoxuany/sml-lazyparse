@@ -62,6 +62,11 @@ structure Codegen :
         fun tModule id = toModuleCase (nameOfId terminals id)
         fun tSnake id = toSnakeCase (nameOfId terminals id)
 
+        fun ruleVarName name =
+          case name of
+            "" => "Default"
+          | _ => name
+
         fun varName v = String.concat ["v" , Int.toString v]
 
         val terminalWhere = "TERMINAL"
@@ -233,7 +238,7 @@ structure Codegen :
             ; List.appi
                 (fn ( i , rule as { name , ... } : I.rule ) =>
                   ( if i > 0 then newline () else ()
-                  ; print [body , "  val parse" , name , " ="]
+                  ; print [body , "  val parse" , ruleVarName name , " ="]
                   ; newline ()
                   ; emitRuleParser (body ^ "    ") defId selfRef selfRef rule
                   ; newline ()
@@ -249,7 +254,7 @@ structure Codegen :
                 (fn ( i , { name , ... } : I.rule ) =>
                   let val prefix = if i = 0 then "[ " else ", "
                   in
-                    print [body , prefix , "parse" , name]
+                    print [body , prefix , "parse" , ruleVarName name]
                     ; newline ()
                   end)
                 atoms
@@ -277,7 +282,7 @@ structure Codegen :
 
                     ; List.app
                         (fn rule as { name , ... } : I.rule =>
-                          ( print [body , "  val parse" , name , " ="]
+                          ( print [body , "  val parse" , ruleVarName name , " ="]
                           ; newline ()
                           ; emitRuleParser (body ^ "    ") defId levelName higherName rule
                           ; newline ()
@@ -291,7 +296,7 @@ structure Codegen :
                     ; newline ()
                     ; List.app
                         (fn { name , ... } : I.rule =>
-                          ( print [body , ", parse" , name]
+                          ( print [body , ", parse" , ruleVarName name]
                           ; newline ()
                           ))
                         rules
