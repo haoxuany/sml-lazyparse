@@ -39,7 +39,7 @@ functor LexInternal (
   )
 
 
-  exception LexError of char * Annot.pos
+  exception LexError of LexStream.stream
 
   structure Trie = struct
     structure CharMap = SplayDict (structure Key = CharOrdered)
@@ -150,7 +150,7 @@ functor LexInternal (
                   List.mapPartial (fn x => x) [keyword , trivial , other]
               in
                 case candidates of
-                  nil => raise LexError (c , pos)
+                  nil => raise LexError ts
                 | first :: rest =>
                     let
                       val (tok , _ , ts') =

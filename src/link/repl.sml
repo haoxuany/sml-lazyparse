@@ -2,21 +2,30 @@
 functor Repl (
   structure Result : sig
     type t
-    type token_stream
+
+    structure TokenStream : sig
+      type t
+      type token
+
+      datatype front = Nil | Cons of token * t
+
+      val front : t -> front
+    end
 
     datatype 'a result =
-      Success of ('a * token_stream) list
+      Success of ('a * TokenStream.t) list
     | Fail of ParseError.t
 
-    exception LexError of char * Annot.pos
+    exception LexError of LexStream.stream
 
-    val lex : Char.char Stream.stream -> Annot.pos -> token_stream
-    val parse : token_stream -> t result
+    val lex : Char.char Stream.stream -> Annot.pos -> TokenStream.t
+    val parse : TokenStream.t -> t result
     val print : t -> string
   end
 ) = struct
 
   structure R = Result
+  structure LS = LexStream
 
   fun run () =
     let
@@ -58,14 +67,30 @@ functor Repl (
 
                 val tokens = R.lex (Stream.fromString input) Annot.empty
                 val results = R.parse tokens
+
+                fun remaining s n =
+                  case R.TokenStream.front s of
+                    R.TokenStream.Nil => n
+                  | R.TokenStream.Cons ( _ , s ) => remaining s (n + 1)
+
               in
                 case results of
                   R.Success parses =>
                     ( print (String.concat
                         [ "parses (" , Int.toString (List.length parses) , "): \n" ])
                     ; List.appi
-                        (fn ( i , ( result , _ ) ) =>
-                          print (String.concat [ Int.toString i , ". " , R.print result , "\n" ]))
+                        (fn ( i , ( result , trailing ) ) =>
+                          let
+                            val rem = remaining trailing 0
+                            val trailing =
+                              if rem = 0 then ""
+                              else String.concat
+                                [ " (" , Int.toString rem , " trailing)" ]
+                          in
+                            print (String.concat
+                              [ Int.toString i , ". " , R.print result
+                              , trailing , "\n" ])
+                          end)
                         parses
                     )
                 | R.Fail error =>
@@ -74,18 +99,27 @@ functor Repl (
                     );
                 loop ()
               end
-              handle R.LexError (c , pos) =>
+              handle R.LexError s =>
                 let
-                  val { lineno , colno , ... } = pos
+                  val { lineno , colno , ... } = LS.pos s
+
+                  fun restOfLine s acc =
+                    case LS.front s of
+                      LS.Nil => String.implode (List.rev acc)
+                    | LS.Cons ( #"\n" , _ ) => String.implode (List.rev acc)
+                    | LS.Cons ( #"\r" , _ ) => String.implode (List.rev acc)
+                    | LS.Cons ( c , s ) => restOfLine s (c :: acc)
+
+                  val rest = restOfLine s nil
                 in
                   print (String.concat
-                    [ "lex error: unexpected '"
-                    , Char.toString c
-                    , "' at "
+                    [ "lex error at "
                     , Int.toString lineno
                     , ":"
                     , Int.toString colno
-                    , "\n"
+                    , ": '"
+                    , rest
+                    , "'\n"
                     ]);
                   loop ()
                 end

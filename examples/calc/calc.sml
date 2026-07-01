@@ -47,7 +47,7 @@ sig
     val pos : t -> Annot.pos
   end
   
-  exception LexError of Char.char * Annot.pos
+  exception LexError of LexStream.stream
   val lex : Char.char Stream.stream -> Annot.pos -> TokenStream.t
   
   val parseStmt : stmt parser
@@ -455,7 +455,6 @@ end = struct
   structure Repl = Repl (
     structure Result = struct
       open Parser
-      type token_stream = TokenStream.t
       type t = repl
       val parse = parse parseRepl
       val print = Print.printRepl

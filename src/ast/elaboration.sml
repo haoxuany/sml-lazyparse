@@ -146,7 +146,7 @@ structure Elaboration :
 
             val spec =
               let
-                val defaultPrec = 5
+                val defaultPrec = 50
 
                 fun nonfix' () =
                   let 

@@ -3,5 +3,5 @@ Group is
   $/basis.cm
   ../../link.cm
 
-  json.sml
-  json_parser.sml
+  arith.sml
+  arith_parser.sml

@@ -30,5 +30,5 @@ structure Run = struct
     )
   end
 
-  val _ = JsonRepl.run ()
+  val run = JsonRepl.run
 end

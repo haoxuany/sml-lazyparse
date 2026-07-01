@@ -231,7 +231,7 @@ sig
     val pos : t -> Annot.pos
   end
   
-  exception LexError of Char.char * Annot.pos
+  exception LexError of LexStream.stream
   val lex : Char.char Stream.stream -> Annot.pos -> TokenStream.t
   
   val parseCon : con parser
@@ -886,6 +886,40 @@ struct
         ]
         end)
   
+        val parseLevel50 = fix (fn parseLevel50 =>
+        let
+          val parseRaise =
+            create ExpRaise "Exp" "Raise" (
+              bind (keyword 43) (fn v0 =>
+              bind (parseNonterminal parseLevel50) (fn v1 =>
+              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
+  
+          val parseIf =
+            create ExpIf "Exp" "If" (
+              bind (keyword 31) (fn v0 =>
+              bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
+              bind (keyword 50) (fn v2 =>
+              bind (parseNonterminal (deref parseExpDummy)) (fn v3 =>
+              bind (keyword 23) (fn v4 =>
+              bind (parseNonterminal parseLevel50) (fn v5 =>
+              return_node ((#node v1) , (#node v3) , (#node v5)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
+  
+          val parseWhile =
+            create ExpWhile "Exp" "While" (
+              bind (keyword 54) (fn v0 =>
+              bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
+              bind (keyword 22) (fn v2 =>
+              bind (parseNonterminal parseLevel50) (fn v3 =>
+              return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
+  
+        in either
+        [ (forget parseAtom)
+        , parseRaise
+        , parseIf
+        , parseWhile
+        ]
+        end)
+  
         val parseLevel7 = fix (fn parseLevel7 =>
         let
           val parseAnnot =
@@ -896,7 +930,7 @@ struct
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
         in either
-        [ (forget parseAtom)
+        [ (forget parseLevel50)
         , parseAnnot
         ]
         end)
@@ -918,12 +952,6 @@ struct
   
         val parseLevel5 = fix (fn parseLevel5 =>
         let
-          val parseRaise =
-            create ExpRaise "Exp" "Raise" (
-              bind (keyword 43) (fn v0 =>
-              bind (parseNonterminal parseLevel5) (fn v1 =>
-              return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
-  
           val parseAndAlso =
             create ExpAndAlso "Exp" "AndAlso" (
               bind (parseNonterminal parseLevel5) (fn v0 =>
@@ -931,30 +959,9 @@ struct
               bind (parseNonterminal (forget parseLevel6)) (fn v2 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
   
-          val parseIf =
-            create ExpIf "Exp" "If" (
-              bind (keyword 31) (fn v0 =>
-              bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
-              bind (keyword 50) (fn v2 =>
-              bind (parseNonterminal (deref parseExpDummy)) (fn v3 =>
-              bind (keyword 23) (fn v4 =>
-              bind (parseNonterminal parseLevel5) (fn v5 =>
-              return_node ((#node v1) , (#node v3) , (#node v5)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 , annot_add v5 ])))))))
-  
-          val parseWhile =
-            create ExpWhile "Exp" "While" (
-              bind (keyword 54) (fn v0 =>
-              bind (parseNonterminal (deref parseExpDummy)) (fn v1 =>
-              bind (keyword 22) (fn v2 =>
-              bind (parseNonterminal parseLevel5) (fn v3 =>
-              return_node ((#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
-  
         in either
         [ (forget parseLevel6)
-        , parseRaise
         , parseAndAlso
-        , parseIf
-        , parseWhile
         ]
         end)
   
@@ -1176,17 +1183,17 @@ struct
         ]
         end)
   
-        val parseLevel5 = fix (fn parseLevel5 =>
+        val parseLevel50 = fix (fn parseLevel50 =>
         let
           val parseCon =
             create PatCon "Pat" "Con" (
               bind (parseNonterminal (deref parseLongIdDummy)) (fn v0 =>
-              bind (parseNonterminal parseLevel5) (fn v1 =>
+              bind (parseNonterminal parseLevel50) (fn v1 =>
               return_node ((#node v0) , (#node v1)) [ annot_add v0 , annot_add v1 ])))
   
           val parseAnnot =
             create PatAnnot "Pat" "Annot" (
-              bind (parseNonterminal parseLevel5) (fn v0 =>
+              bind (parseNonterminal parseLevel50) (fn v0 =>
               bind (keyword 8) (fn v1 =>
               bind (parseNonterminal (deref parseTypDummy)) (fn v2 =>
               return_node ((#node v0) , (#node v2)) [ annot_add v0 , annot_add v1 , annot_add v2 ]))))
@@ -1204,7 +1211,7 @@ struct
                 return_node (#node v3) [ annot_add v3 ])))
               (fn v2 =>
               bind (keyword 19) (fn v3 =>
-              bind (parseNonterminal parseLevel5) (fn v4 =>
+              bind (parseNonterminal parseLevel50) (fn v4 =>
               return_node ((#node v1) , (#node v2) , (#node v4)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 , annot_add v4 ]))))))
   
           val parseLayered =
@@ -1219,7 +1226,7 @@ struct
                 return_node (#node v2) [ annot_add v2 ])))
               (fn v1 =>
               bind (keyword 19) (fn v2 =>
-              bind (parseNonterminal parseLevel5) (fn v3 =>
+              bind (parseNonterminal parseLevel50) (fn v3 =>
               return_node ((#node v0) , (#node v1) , (#node v3)) [ annot_add v0 , annot_add v1 , annot_add v2 , annot_add v3 ])))))
   
         in either
@@ -1232,7 +1239,7 @@ struct
         end)
   
       in
-        longest (forget parseLevel5)
+        longest (forget parseLevel50)
       end
   
     (* PatListInner *)
@@ -1731,12 +1738,12 @@ struct
         ]
         end)
   
-        val parseLevel5 = fix (fn parseLevel5 =>
+        val parseLevel50 = fix (fn parseLevel50 =>
         let
           val parseRec =
             create ValBindRec "ValBind" "Rec" (
               bind (keyword 44) (fn v0 =>
-              bind (parseNonterminal parseLevel5) (fn v1 =>
+              bind (parseNonterminal parseLevel50) (fn v1 =>
               return_node (#node v1) [ annot_add v0 , annot_add v1 ])))
   
         in either
@@ -1746,7 +1753,7 @@ struct
         end)
   
       in
-        longest (forget parseLevel5)
+        longest (forget parseLevel50)
       end
   
     (* FunBind *)
@@ -4324,21 +4331,9 @@ end = struct
       | ExpFn v1 =>
           ( push buf "fn" lineno
           ; prettyPrintMatch buf v1)
-      | ExpAnnot (v0 , v2) =>
-          ( prettyPrintSelf buf v0
-          ; push buf ":" lineno
-          ; prettyPrintTyp buf v2)
-      | ExpHandle (v0 , v2) =>
-          ( prettyPrintSelf buf v0
-          ; push buf "handle" lineno
-          ; prettyPrintMatch buf v2)
       | ExpRaise v1 =>
           ( push buf "raise" lineno
           ; prettyPrintSelf buf v1)
-      | ExpAndAlso (v0 , v2) =>
-          ( prettyPrintSelf buf v0
-          ; push buf "andalso" lineno
-          ; prettyPrintSelf buf v2)
       | ExpIf (v1 , v3 , v5) =>
           ( push buf "if" lineno
           ; prettyPrintExp buf v1
@@ -4351,6 +4346,18 @@ end = struct
           ; prettyPrintExp buf v1
           ; push buf "do" lineno
           ; prettyPrintSelf buf v3)
+      | ExpAnnot (v0 , v2) =>
+          ( prettyPrintSelf buf v0
+          ; push buf ":" lineno
+          ; prettyPrintTyp buf v2)
+      | ExpHandle (v0 , v2) =>
+          ( prettyPrintSelf buf v0
+          ; push buf "handle" lineno
+          ; prettyPrintMatch buf v2)
+      | ExpAndAlso (v0 , v2) =>
+          ( prettyPrintSelf buf v0
+          ; push buf "andalso" lineno
+          ; prettyPrintSelf buf v2)
       | ExpOrElse (v0 , v2) =>
           ( prettyPrintSelf buf v0
           ; push buf "orelse" lineno
@@ -5378,7 +5385,6 @@ end = struct
   structure Repl = Repl (
     structure Result = struct
       open Parser
-      type token_stream = TokenStream.t
       type t = sig_bind
       val parse = parse parseSigBind
       val print = Print.printSigBind

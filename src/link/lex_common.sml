@@ -43,7 +43,7 @@ structure LexCommon = struct
       RegexTerminal (
         type t = unit
         val regex =
-          R.matching (fn i => List.exists (fn j => i = j) whitespace)
+          R.plus (R.matching (fn i => List.exists (fn j => i = j) whitespace))
         fun map _ = ()
       )
     end

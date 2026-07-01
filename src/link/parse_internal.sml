@@ -201,11 +201,11 @@ functor ParseInternal (
   fun annot_add ({ span , ... } : 'a annot)
     : Annot.span = span
 
-  fun create rule_construct sort rule node = 
+  fun create rule_construct sort' rule' node = 
     mapError 
-    (fn ({ error , ... } : internal_error) =>
-      { sort = SOME sort 
-      , rule = SOME rule 
+    (fn ({ error , sort , rule } : internal_error) =>
+      { sort = case sort of NONE => SOME sort' | SOME _ => sort
+      , rule = case rule of NONE => SOME rule' | SOME _ => rule
       , error = error })
     (map rule_construct node)
 

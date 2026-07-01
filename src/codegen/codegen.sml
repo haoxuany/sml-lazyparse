@@ -429,7 +429,7 @@ structure Codegen :
         ; print ["end"]
         ; break ()
         ; break ()
-        ; print ["exception LexError of Char.char * Annot.pos"]
+        ; print ["exception LexError of LexStream.stream"]
         ; break ()
         ; print ["val lex : Char.char Stream.stream -> Annot.pos -> TokenStream.t"]
         ; break ()
@@ -1047,8 +1047,6 @@ structure Codegen :
               ; print ["structure Result = struct"]
               ; break ()
               ; print ["open Parser"]
-              ; break ()
-              ; print ["type token_stream = TokenStream.t"]
               ; break ()
               ; print ["type t = " , ntSnake defId]
               ; break ()

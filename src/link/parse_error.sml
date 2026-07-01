@@ -10,14 +10,14 @@ structure ParseError : sig
       { sort : string 
       , rulename : string 
       , keyword : string
-      , actual : string (* terminal *)
+      , actual : string 
       , pos : Annot.pos 
       }
   | ExpectedTerminal of
       { sort : string 
       , rulename : string 
       , terminal : string
-      , actual : string (* keyword *)
+      , actual : string
       , pos : Annot.pos 
       }
 
@@ -33,14 +33,14 @@ end = struct
       { sort : string 
       , rulename : string 
       , keyword : string
-      , actual : string (* terminal *)
+      , actual : string
       , pos : Annot.pos 
       }
   | ExpectedTerminal of
       { sort : string 
       , rulename : string 
       , terminal : string
-      , actual : string (* keyword *)
+      , actual : string
       , pos : Annot.pos 
       }
 

@@ -1,0 +1,10 @@
+
+Exp ::= 
+  Number [ name Number ]
+| Exp "+" Exp [ name Plus , prec 30 ]
+| Exp "*" Exp [ name Times , prec 40 ]
+| "(" Exp ")" [ name Group ]
+
+Number ::= 'nat' [ name Nat ]
+
+Repl ::= Exp [ name Exp ]

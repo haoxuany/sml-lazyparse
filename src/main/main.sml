@@ -10,10 +10,6 @@ structure Main = struct
     ; OS.Process.exit OS.Process.failure
     )
 
-  fun stripExtension filename =
-    case OS.Path.splitBaseExt filename of
-      { base , ext = _ } => OS.Path.file base
-
   fun run (filename , output) =
     let
       val _ =
@@ -44,7 +40,9 @@ structure Main = struct
 
   fun main () =
     case CommandLine.arguments () of
-      [filename] => run (filename , stripExtension filename)
+      [filename] =>
+        let val { base , ext = _ } = OS.Path.splitBaseExt filename
+        in run (filename , base) end
     | [filename , "-o" , output] => run (filename , output)
     | _ => usage ()
 
